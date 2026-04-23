@@ -4,7 +4,7 @@ import { useState } from "react";
 import Sidebar from "@/components/dashboard/Sidebar";
 import Topbar from "@/components/dashboard/Topbar";
 
-export default function DashboardLayout({ children }) {
+export default function DashboardShellLayout({ children }) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
   return (
