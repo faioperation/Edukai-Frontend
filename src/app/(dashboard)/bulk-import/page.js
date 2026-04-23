@@ -211,7 +211,7 @@ export default function BulkImportPage() {
           <div className="grid gap-4 md:grid-cols-2">
             <div className="space-y-2">
               <label className="text-sm font-medium text-black/70 dark:text-slate-300">
-                Minimum Years of Experience<span className="text-rose-500">**</span>
+                Minimum Years of Experience
               </label>
               <select
                 value={minExp}
@@ -228,7 +228,7 @@ export default function BulkImportPage() {
 
             <div className="space-y-2">
               <label className="text-sm font-medium text-black/70 dark:text-slate-300">
-                Required Skills (comma separated)<span className="text-rose-500">**</span>
+                Required Skills (comma separated)
               </label>
               <input
                 value={skills}
@@ -240,7 +240,7 @@ export default function BulkImportPage() {
 
             <div className="space-y-2 md:col-span-1">
               <label className="text-sm font-medium text-black/70 dark:text-slate-300">
-                Job Role<span className="text-rose-500">**</span>
+                Job Role
               </label>
               <input
                 value={jobRole}
