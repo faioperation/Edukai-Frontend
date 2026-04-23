@@ -125,7 +125,7 @@ export default function DashboardPage() {
         </div>
 
         <Link
-          href="/dashboard/bulk-import"
+          href="/bulk-import"
           className="inline-flex w-full cursor-pointer items-center justify-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-transform hover:scale-[1.02] hover:opacity-95 sm:w-auto dark:bg-primary"
         >
           <CheckCircle2 size={18} />
@@ -218,7 +218,7 @@ export default function DashboardPage() {
           ))}
 
           <Link
-            href="/dashboard/activities"
+            href="/activities"
             className="inline-flex cursor-pointer items-center gap-2 text-sm font-medium text-primary hover:underline dark:text-primary"
           >
             See More <ArrowRight size={16} />

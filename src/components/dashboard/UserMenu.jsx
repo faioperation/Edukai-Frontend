@@ -50,7 +50,7 @@ export default function UserMenu() {
         >
           <Link
             role="menuitem"
-            href="/dashboard/settings"
+            href="/settings"
             className="flex cursor-pointer items-center gap-2 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50 dark:text-slate-200 dark:hover:bg-slate-900"
             onClick={() => setOpen(false)}
           >

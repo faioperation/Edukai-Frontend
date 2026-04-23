@@ -15,12 +15,12 @@ import {
 
 const navItems = [
   { href: "/dashboard", label: "Dashboard", icon: Grid2X2 },
-  { href: "/dashboard/bulk-import", label: "Bulk Import", icon: Import },
-  { href: "/dashboard/availability", label: "Availability Check", icon: CheckCircle2 },
-  { href: "/dashboard/cv-queue", label: "CV Queue", icon: FileText },
-  { href: "/dashboard/ai-rewriter", label: "AI Re-writer", icon: Sparkles },
-  { href: "/dashboard/organizations", label: "Organizations", icon: Building2 },
-  { href: "/dashboard/contact", label: "Contact", icon: Contact },
+  { href: "/bulk-import", label: "Bulk Import", icon: Import },
+  { href: "/availability", label: "Availability Check", icon: CheckCircle2 },
+  { href: "/cv-queue", label: "CV Queue", icon: FileText },
+  { href: "/ai-rewriter", label: "AI Re-writer", icon: Sparkles },
+  { href: "/organizations", label: "Organizations", icon: Building2 },
+  { href: "/contact", label: "Contact", icon: Contact },
 ];
 
 export default function Sidebar({ collapsed = false }) {
