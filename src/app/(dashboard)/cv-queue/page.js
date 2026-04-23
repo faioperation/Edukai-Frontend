@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import toast from "react-hot-toast";
 import Image from "next/image";
+import { useRouter } from "next/navigation";
 import {
   Eye,
   FileText,
@@ -156,6 +157,7 @@ function availabilityPillClasses(availability) {
 }
 
 export default function CvQueuePage() {
+  const router = useRouter();
   const [rows, setRows] = useState(seed);
   const [activeTab, setActiveTab] = useState("all");
   const [q, setQ] = useState("");
@@ -183,7 +185,8 @@ export default function CvQueuePage() {
   }, [rows]);
 
   function generateCv(name) {
-    toast.success(`Generating CV for ${name}...`);
+    toast.success(`Opening AI Re-writer for ${name}...`);
+    router.push("/ai-rewriter");
   }
 
   function openProfile(row) {
@@ -225,7 +228,7 @@ export default function CvQueuePage() {
     <div className="space-y-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <h2 className="text-3xl font-semibold text-black dark:text-slate-100">
+          <h2 className="text-3xl font-semibold text-primary dark:text-slate-100">
             CV Processing Queue
           </h2>
           <p className="mt-2 text-base text-black/60 dark:text-slate-400">

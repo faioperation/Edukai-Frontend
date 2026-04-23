@@ -19,8 +19,8 @@ const navItems = [
   // { href: "/availability", label: "Availability Check", icon: CheckCircle2 },
   { href: "/cv-queue", label: "CV Queue", icon: FileText },
   { href: "/ai-rewriter", label: "AI Re-writer", icon: Sparkles },
-  { href: "/organizations", label: "Organizations", icon: Building2 },
-  { href: "/contact", label: "Contact", icon: Contact },
+  // { href: "/organizations", label: "Organizations", icon: Building2 },
+  // { href: "/contact", label: "Contact", icon: Contact },
 ];
 
 export default function Sidebar({ collapsed = false }) {
