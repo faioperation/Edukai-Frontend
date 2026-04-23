@@ -16,7 +16,7 @@ import {
 const navItems = [
   { href: "/dashboard", label: "Dashboard", icon: Grid2X2 },
   { href: "/bulk-import", label: "Bulk Import", icon: Import },
-  { href: "/availability", label: "Availability Check", icon: CheckCircle2 },
+  // { href: "/availability", label: "Availability Check", icon: CheckCircle2 },
   { href: "/cv-queue", label: "CV Queue", icon: FileText },
   { href: "/ai-rewriter", label: "AI Re-writer", icon: Sparkles },
   { href: "/organizations", label: "Organizations", icon: Building2 },
