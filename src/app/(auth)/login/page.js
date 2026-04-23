@@ -33,13 +33,6 @@ export default function LoginPage() {
   return (
     <main className="flex min-h-[calc(100vh-0px)] items-center justify-center p-4">
       <div className="w-full max-w-md rounded-2xl border bg-card p-6 shadow-sm">
-        <a
-          href="/"
-          className="mb-4 inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground"
-        >
-          <span aria-hidden>←</span> Back to Home
-        </a>
-
         <div className="text-center">
           <div className="text-3xl font-semibold tracking-tight text-primary dark:text-primary">
             Edukai

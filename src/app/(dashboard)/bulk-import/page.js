@@ -123,7 +123,7 @@ export default function BulkImportPage() {
   return (
     <div className="space-y-8">
       <div>
-        <h2 className="text-3xl font-semibold text-black dark:text-slate-100">
+        <h2 className="text-3xl font-semibold text-primary dark:text-slate-100">
           Bulk Import
         </h2>
         <p className="mt-2 text-base text-black/60 dark:text-slate-400">
