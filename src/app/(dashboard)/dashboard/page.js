@@ -149,7 +149,7 @@ export default function DashboardPage() {
                   <div className="text-base font-medium text-black/70 dark:text-slate-300">
                     {s.title}
                   </div>
-                  <div className="mt-3 text-4xl font-semibold tracking-tight text-black dark:text-slate-100">
+                  <div className="mt-3 text-4xl font-semibold tracking-tight text-gray-800 dark:text-slate-100">
                     {s.value}
                   </div>
                 </div>

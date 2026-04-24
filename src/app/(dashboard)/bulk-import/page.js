@@ -157,7 +157,7 @@ export default function BulkImportPage() {
             Click to select CV files
           </div>
           <div className="mt-1 text-sm text-black/60 dark:text-slate-400">
-            PDF, DOC, or DOCX — you can select multiple files
+            Only pdf files are supported
           </div>
         </div>
 
@@ -201,70 +201,72 @@ export default function BulkImportPage() {
         ) : null}
       </div>
 
-      <Card className="rounded-2xl">
-        <CardHeader>
-          <CardTitle className="text-lg font-semibold text-black dark:text-slate-100">
-            Automated Quality Check Rules
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="grid gap-4 md:grid-cols-2">
-            <div className="space-y-2">
-              <label className="text-sm font-medium text-black/70 dark:text-slate-300">
-                Minimum Years of Experience
-              </label>
-              <select
-                value={minExp}
-                onChange={(e) => setMinExp(e.target.value)}
-                className="h-12 w-full cursor-pointer rounded-md border border-slate-200 bg-white px-3 text-base text-slate-900 outline-none focus:ring-2 focus:ring-primary/30 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:focus:ring-primary/40"
-              >
-                <option>Select Experience</option>
-                <option>0-1 years</option>
-                <option>2-3 years</option>
-                <option>4-6 years</option>
-                <option>7+ years</option>
-              </select>
+      {totalSelected ? (
+        <Card className="rounded-2xl">
+          <CardHeader>
+            <CardTitle className="text-lg font-semibold text-black dark:text-slate-100">
+              Automated Quality Check Rules
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid gap-4 md:grid-cols-2">
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-black/70 dark:text-slate-300">
+                  Minimum Years of Experience
+                </label>
+                <select
+                  value={minExp}
+                  onChange={(e) => setMinExp(e.target.value)}
+                  className="h-12 w-full cursor-pointer rounded-md border border-slate-200 bg-white px-3 text-base text-slate-900 outline-none focus:ring-2 focus:ring-primary/30 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:focus:ring-primary/40"
+                >
+                  <option>Select Experience</option>
+                  <option>0-1 years</option>
+                  <option>2-3 years</option>
+                  <option>4-6 years</option>
+                  <option>7+ years</option>
+                </select>
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-black/70 dark:text-slate-300">
+                  Required Skills (comma separated)
+                </label>
+                <input
+                  value={skills}
+                  onChange={(e) => setSkills(e.target.value)}
+                  placeholder="e.g. React, Node.js"
+                  className="h-12 w-full rounded-md border border-slate-200 bg-white px-3 text-base text-slate-900 outline-none focus:ring-2 focus:ring-primary/30 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:placeholder:text-slate-500 dark:focus:ring-primary/40"
+                />
+              </div>
+
+              <div className="space-y-2 md:col-span-1">
+                <label className="text-sm font-medium text-black/70 dark:text-slate-300">
+                  Job Role
+                </label>
+                <input
+                  value={jobRole}
+                  onChange={(e) => setJobRole(e.target.value)}
+                  placeholder="e.g. Math Teacher"
+                  className="h-12 w-full rounded-md border border-slate-200 bg-white px-3 text-base text-slate-900 outline-none focus:ring-2 focus:ring-primary/30 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:placeholder:text-slate-500 dark:focus:ring-primary/40"
+                />
+              </div>
             </div>
+          </CardContent>
+        </Card>
+      ) : null}
 
-            <div className="space-y-2">
-              <label className="text-sm font-medium text-black/70 dark:text-slate-300">
-                Required Skills (comma separated)
-              </label>
-              <input
-                value={skills}
-                onChange={(e) => setSkills(e.target.value)}
-                placeholder="e.g. React, Node.js"
-                className="h-12 w-full rounded-md border border-slate-200 bg-white px-3 text-base text-slate-900 outline-none focus:ring-2 focus:ring-primary/30 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:placeholder:text-slate-500 dark:focus:ring-primary/40"
-              />
-            </div>
-
-            <div className="space-y-2 md:col-span-1">
-              <label className="text-sm font-medium text-black/70 dark:text-slate-300">
-                Job Role
-              </label>
-              <input
-                value={jobRole}
-                onChange={(e) => setJobRole(e.target.value)}
-                placeholder="e.g. Math Teacher"
-                className="h-12 w-full rounded-md border border-slate-200 bg-white px-3 text-base text-slate-900 outline-none focus:ring-2 focus:ring-primary/30 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:placeholder:text-slate-500 dark:focus:ring-primary/40"
-              />
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-end">
-
-        <button
-          type="button"
-          onClick={startQualityCheck}
-          disabled={!canSend}
-          className="inline-flex w-full cursor-pointer items-center justify-center gap-2 rounded-md bg-primary px-6 py-3 text-base font-semibold text-primary-foreground transition-transform hover:scale-[1.01] disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto dark:bg-primary"
-        >
-          <Sparkles size={20} />
-          Send to check quality
-        </button>
-      </div>
+      {totalSelected ? (
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-end">
+          <button
+            type="button"
+            onClick={startQualityCheck}
+            className="inline-flex w-full cursor-pointer items-center justify-center gap-2 rounded-md bg-primary px-6 py-3 text-base font-semibold text-primary-foreground transition-transform hover:scale-[1.01] sm:w-auto dark:bg-primary"
+          >
+            <Sparkles size={20} />
+            Send to check quality
+          </button>
+        </div>
+      ) : null}
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent showCloseButton={false} className="sm:max-w-2xl">
