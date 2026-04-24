@@ -110,7 +110,7 @@ export default function LoginPage() {
           <button
             type="submit"
             disabled={isSubmitting}
-            className="h-11 w-full rounded-md bg-primary font-medium text-primary-foreground hover:opacity-95 disabled:opacity-60 dark:bg-primary"
+            className="h-11 w-full rounded-md cursor-pointer bg-primary font-medium text-primary-foreground hover:opacity-95 disabled:opacity-60 dark:bg-primary"
           >
             {isSubmitting ? "Signing in..." : "Sign in"}
           </button>

@@ -119,7 +119,6 @@ export default function MailSubmissionPage() {
   const [jobTitle, setJobTitle] = useState("All Job Titles");
   const [phase, setPhase] = useState("All Phases");
   const [radius, setRadius] = useState("All Radius Data");
-  const [isSending, setIsSending] = useState(false);
 
   const locations = useMemo(() => {
     const s = new Set(rows.map((r) => r.location));
@@ -143,17 +142,17 @@ export default function MailSubmissionPage() {
     return rows.filter((r) => {
       const keywordOk = q
         ? [
-            r.contactPerson,
-            r.email,
-            r.organization,
-            r.jobTitle,
-            r.industry,
-            r.location,
-            r.phase,
-          ]
-            .join(" ")
-            .toLowerCase()
-            .includes(q)
+          r.contactPerson,
+          r.email,
+          r.organization,
+          r.jobTitle,
+          r.industry,
+          r.location,
+          r.phase,
+        ]
+          .join(" ")
+          .toLowerCase()
+          .includes(q)
         : true;
       const locationOk = location === "All Locations" ? true : r.location === location;
       const jobOk = jobTitle === "All Job Titles" ? true : r.jobTitle === jobTitle;
@@ -191,23 +190,16 @@ export default function MailSubmissionPage() {
     });
   }
 
-  async function sendEmail() {
+  function sendEmail() {
     if (!selectedCount) {
       toast.error("Please select at least one contact");
       return;
     }
-    if (isSending) return;
 
-    setIsSending(true);
-    const toastId = toast.loading(
-      `Sending CV to ${selectedCount} contact${selectedCount > 1 ? "s" : ""}...`
+    const ids = Array.from(selected).join(",");
+    router.push(
+      `/mail-submission/compose?contacts=${selectedCount}&ids=${encodeURIComponent(ids)}`
     );
-
-    await new Promise((r) => setTimeout(r, 4000));
-
-    toast.success("Successfully sent the email", { id: toastId });
-    setIsSending(false);
-    router.push("/cv-queue");
   }
 
   function selectStyles() {
@@ -301,11 +293,10 @@ export default function MailSubmissionPage() {
         <button
           type="button"
           onClick={sendEmail}
-          disabled={isSending}
           className="inline-flex w-full cursor-pointer items-center justify-center gap-2 rounded-xl bg-primary px-6 py-3 text-base font-semibold text-primary-foreground transition-transform hover:scale-[1.02] hover:opacity-95 disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto dark:bg-primary"
         >
           <Send size={18} />
-          {isSending ? "Sending..." : "Send Email"}
+          Proceed to Compose Email
         </button>
       </div>
 

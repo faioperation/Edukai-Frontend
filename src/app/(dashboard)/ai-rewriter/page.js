@@ -51,6 +51,7 @@ export default function AiRewriterPage() {
 
   const candidateName = dummyEnhanced.header.name;
   const [enhanced, setEnhanced] = useState(dummyEnhanced);
+  const [isEditing, setIsEditing] = useState(false);
 
   const encodedOriginalUrl = useMemo(() => encodeURI(ORIGINAL_CV_URL), []);
 
@@ -143,9 +144,18 @@ export default function AiRewriterPage() {
             <CardTitle className="text-base font-semibold text-primary dark:text-slate-100">
               AI Enhanced Version
             </CardTitle>
-            <span className="rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-xs font-medium text-primary dark:border-primary/25 dark:bg-primary/10">
-              Editable AI output
-            </span>
+            <button
+              type="button"
+              onClick={() => setIsEditing((v) => !v)}
+              className={[
+                "inline-flex cursor-pointer items-center justify-center rounded-full border px-3 py-1 text-xs font-semibold transition-colors",
+                isEditing
+                  ? "border-emerald-600 bg-emerald-600 text-white hover:bg-emerald-700 dark:border-emerald-500 dark:bg-emerald-500 dark:hover:bg-emerald-600"
+                  : "border-primary/30 bg-primary/10 text-primary hover:bg-primary/15 dark:border-primary/25 dark:bg-primary/10",
+              ].join(" ")}
+            >
+              {isEditing ? "Save" : "Edit"}
+            </button>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-950">
@@ -155,9 +165,16 @@ export default function AiRewriterPage() {
                     <div className="text-xs font-semibold tracking-wide text-slate-500">
                       AI ENHANCED VERSION
                     </div>
-                    <div className="inline-flex items-center gap-2 rounded-full bg-primary/10 px-3 py-1 text-xs font-semibold text-primary">
+                    <div
+                      className={[
+                        "inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-semibold",
+                        isEditing
+                          ? "bg-emerald-600 text-white"
+                          : "bg-slate-100 text-slate-700",
+                      ].join(" ")}
+                    >
                       <PencilLine size={14} />
-                      Editable
+                      {isEditing ? "Editing" : "Read-only"}
                     </div>
                   </div>
 
@@ -165,24 +182,28 @@ export default function AiRewriterPage() {
                     <input
                       value={enhanced.header.name}
                       onChange={(e) => updateHeader("name", e.target.value)}
-                      className="w-full bg-transparent text-center text-3xl font-semibold text-slate-900 outline-none"
+                      readOnly={!isEditing}
+                      className="w-full bg-transparent text-center text-3xl font-semibold text-slate-900 outline-none read-only:cursor-not-allowed read-only:text-slate-700"
                     />
                     <input
                       value={enhanced.header.title}
                       onChange={(e) => updateHeader("title", e.target.value)}
-                      className="mt-2 w-full bg-transparent text-center text-base font-medium text-slate-700 outline-none"
+                      readOnly={!isEditing}
+                      className="mt-2 w-full bg-transparent text-center text-base font-medium text-slate-700 outline-none read-only:cursor-not-allowed"
                     />
                     <div className="mt-2 flex flex-col items-center gap-1 text-sm text-slate-600 sm:flex-row sm:justify-center">
                       <input
                         value={enhanced.header.location}
                         onChange={(e) => updateHeader("location", e.target.value)}
-                        className="w-full max-w-md bg-transparent text-center outline-none"
+                        readOnly={!isEditing}
+                        className="w-full max-w-md bg-transparent text-center outline-none read-only:cursor-not-allowed"
                       />
                       <span className="hidden sm:inline">•</span>
                       <input
                         value={enhanced.header.contact}
                         onChange={(e) => updateHeader("contact", e.target.value)}
-                        className="w-full max-w-md bg-transparent text-center outline-none"
+                        readOnly={!isEditing}
+                        className="w-full max-w-md bg-transparent text-center outline-none read-only:cursor-not-allowed"
                       />
                     </div>
                   </div>
@@ -196,8 +217,9 @@ export default function AiRewriterPage() {
                         <textarea
                           value={s.body}
                           onChange={(e) => updateSection(s.id, e.target.value)}
+                          readOnly={!isEditing}
                           rows={s.id === "profile" ? 7 : 6}
-                          className="mt-3 w-full resize-none bg-transparent text-sm leading-relaxed text-slate-700 outline-none"
+                          className="mt-3 w-full resize-none bg-transparent text-sm leading-relaxed text-slate-700 outline-none read-only:cursor-not-allowed"
                         />
                       </div>
                     ))}
@@ -224,7 +246,7 @@ export default function AiRewriterPage() {
           className="inline-flex cursor-pointer items-center justify-center gap-2 rounded-xl bg-primary px-6 py-3 text-base font-semibold text-primary-foreground transition-transform hover:scale-[1.02] hover:opacity-95 dark:bg-primary"
         >
           <Mail size={18} />
-          Proceed to Mail Submission
+          Proceed to Contact Queue
         </button>
       </div>
     </div>
