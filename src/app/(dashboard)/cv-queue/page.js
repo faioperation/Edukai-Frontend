@@ -217,6 +217,10 @@ export default function CvQueuePage() {
     toast.success("Saved changes");
   }
 
+  function updateRowField(id, patch) {
+    setRows((prev) => prev.map((r) => (r.id === id ? { ...r, ...patch } : r)));
+  }
+
   const selected = useMemo(() => {
     if (!selectedId) return null;
     return rows.find((r) => r.id === selectedId) || null;
@@ -339,24 +343,39 @@ export default function CvQueuePage() {
                     {row.phone}
                   </td>
                   <td className="px-5 py-4">
-                    <span
+                    <select
+                      value={row.status}
+                      onChange={(e) => {
+                        const next = e.target.value;
+                        updateRowField(row.id, { status: next });
+                        toast.success(`Quality updated for ${row.name}`);
+                      }}
                       className={[
-                        "inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-medium",
+                        "mr-2 h-9 cursor-pointer rounded-full border px-4 pr-9 text-xs font-semibold outline-none transition focus:ring-2 focus:ring-primary/25",
                         statusPillClasses(row.status),
                       ].join(" ")}
                     >
-                      {statusLabel(row.status)}
-                    </span>
+                      <option value="pending">Pending</option>
+                      <option value="passed">Quality Passed</option>
+                      <option value="failed">Quality Failed</option>
+                    </select>
                   </td>
                   <td className="px-5 py-4">
-                    <span
+                    <select
+                      value={row.availability}
+                      onChange={(e) => {
+                        const next = e.target.value;
+                        updateRowField(row.id, { availability: next });
+                        toast.success(`Availability updated for ${row.name}`);
+                      }}
                       className={[
-                        "inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-medium",
+                        "mr-2 h-9 cursor-pointer rounded-full border px-4 pr-9 text-xs font-semibold outline-none transition focus:ring-2 focus:ring-primary/25",
                         availabilityPillClasses(row.availability),
                       ].join(" ")}
                     >
-                      {row.availability}
-                    </span>
+                      <option value="Available">Available</option>
+                      <option value="Not available">Not available</option>
+                    </select>
                   </td>
                   <td className="px-5 py-4">
                     <div className="flex items-center gap-2">
@@ -447,14 +466,22 @@ export default function CvQueuePage() {
               <div className="rounded-xl bg-slate-50 p-3 dark:bg-slate-900">
                 <div className="text-xs text-black/60 dark:text-slate-400">Quality</div>
                 <div className="mt-2">
-                  <span
+                  <select
+                    value={row.status}
+                    onChange={(e) => {
+                      const next = e.target.value;
+                      updateRowField(row.id, { status: next });
+                      toast.success(`Quality updated for ${row.name}`);
+                    }}
                     className={[
-                      "inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-medium",
+                      "h-9 w-full cursor-pointer rounded-full border px-4 pr-9 text-xs font-semibold outline-none transition focus:ring-2 focus:ring-primary/25",
                       statusPillClasses(row.status),
                     ].join(" ")}
                   >
-                    {statusLabel(row.status)}
-                  </span>
+                    <option value="pending">Pending</option>
+                    <option value="passed">Quality Passed</option>
+                    <option value="failed">Quality Failed</option>
+                  </select>
                 </div>
               </div>
               <div className="rounded-xl bg-slate-50 p-3 dark:bg-slate-900">
@@ -462,14 +489,21 @@ export default function CvQueuePage() {
                   Availability
                 </div>
                 <div className="mt-2">
-                  <span
+                  <select
+                    value={row.availability}
+                    onChange={(e) => {
+                      const next = e.target.value;
+                      updateRowField(row.id, { availability: next });
+                      toast.success(`Availability updated for ${row.name}`);
+                    }}
                     className={[
-                      "inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-medium",
+                      "h-9 w-full cursor-pointer rounded-full border px-4 pr-9 text-xs font-semibold outline-none transition focus:ring-2 focus:ring-primary/25",
                       availabilityPillClasses(row.availability),
                     ].join(" ")}
                   >
-                    {row.availability}
-                  </span>
+                    <option value="Available">Available</option>
+                    <option value="Not available">Not available</option>
+                  </select>
                 </div>
               </div>
             </div>

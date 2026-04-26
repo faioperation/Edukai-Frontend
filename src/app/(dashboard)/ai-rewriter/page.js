@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import toast from "react-hot-toast";
-import { Download, Mail, PencilLine } from "lucide-react";
+import { Check, Download, Mail, PencilLine, X } from "lucide-react";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import PdfPreview from "@/components/PdfPreview";
@@ -14,9 +14,10 @@ const ORIGINAL_CV_URL =
 const dummyEnhanced = {
   header: {
     name: "MD. AL RAKEB RASEL BOSHUNIA",
-    title: "Backend Engineer (Django)",
+    designation: "Backend Engineer (Django)",
     location: "Dhaka, Bangladesh",
-    contact: "++880 1749126396  |  official.alrakib@gmail.com",
+    phone: "++880 1749126396",
+    email: "official.alrakib@gmail.com",
   },
   sections: [
     {
@@ -46,12 +47,181 @@ const dummyEnhanced = {
   ],
 };
 
+function EditIconButton({ onClick, label = "Edit" }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={label}
+      className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 bg-white/80 text-slate-700 shadow-sm backdrop-blur transition hover:bg-white hover:text-slate-900 focus:outline-none focus:ring-2 focus:ring-primary/40 dark:border-slate-800 dark:bg-slate-950/70 dark:text-slate-200 dark:hover:bg-slate-950"
+    >
+      <PencilLine size={16} />
+    </button>
+  );
+}
+
+function InlineActionButton({ onClick, variant = "default", children, label }) {
+  const classes =
+    variant === "primary"
+      ? "border-emerald-600 bg-emerald-600 text-white hover:bg-emerald-700 dark:border-emerald-500 dark:bg-emerald-500 dark:hover:bg-emerald-600"
+      : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-200 dark:hover:bg-slate-900";
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={label}
+      className={[
+        "inline-flex items-center justify-center gap-2 rounded-full border px-3 py-1 text-xs font-semibold transition",
+        classes,
+      ].join(" ")}
+    >
+      {children}
+    </button>
+  );
+}
+
+function CvHoverEditText({
+  id,
+  value,
+  draft,
+  setDraft,
+  isActive,
+  onStart,
+  onSave,
+  onCancel,
+  className = "",
+  textClassName = "",
+  inputClassName = "",
+  placeholder = "",
+  align = "left",
+}) {
+  const alignClasses =
+    align === "center"
+      ? "text-center justify-center"
+      : align === "right"
+        ? "text-right justify-end"
+        : "text-left justify-start";
+
+  return (
+    <div className={["group relative", className].join(" ")}>
+      {!isActive ? (
+        <div className={["relative flex items-center gap-3", alignClasses].join(" ")}>
+          <div className={["min-w-0", textClassName].join(" ")}>
+            {value || (
+              <span className="text-slate-400 dark:text-slate-500">
+                {placeholder || "—"}
+              </span>
+            )}
+          </div>
+          <div
+            className={[
+              "absolute -right-1 top-1/2 -translate-y-1/2 opacity-0 transition group-hover:opacity-100",
+              align === "center" ? "right-0" : "",
+            ].join(" ")}
+          >
+            <EditIconButton onClick={() => onStart(id, value)} />
+          </div>
+        </div>
+      ) : (
+        <div className="flex items-center justify-between gap-3">
+          <input
+            autoFocus
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            placeholder={placeholder}
+            className={[
+              "w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:ring-2 focus:ring-primary/30 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100",
+              inputClassName,
+            ].join(" ")}
+          />
+          <div className="flex shrink-0 items-center gap-2">
+            <InlineActionButton
+              variant="primary"
+              onClick={() => onSave(id, draft)}
+              label="Save"
+            >
+              <Check size={14} />
+              Save
+            </InlineActionButton>
+            <InlineActionButton onClick={onCancel} label="Cancel">
+              <X size={14} />
+              Cancel
+            </InlineActionButton>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CvHoverEditSection({
+  id,
+  title,
+  value,
+  draft,
+  setDraft,
+  isActive,
+  onStart,
+  onSave,
+  onCancel,
+  rows = 6,
+}) {
+  return (
+    <div className="group">
+      <div className="flex items-center justify-between gap-3 border-b border-slate-200 pb-2 dark:border-slate-800">
+        <div className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+          {title}
+        </div>
+
+        {!isActive ? (
+          <div className="opacity-0 transition group-hover:opacity-100">
+            <EditIconButton onClick={() => onStart(id, value)} label={`Edit ${title}`} />
+          </div>
+        ) : (
+          <div className="flex items-center gap-2">
+            <InlineActionButton
+              variant="primary"
+              onClick={() => onSave(id, draft)}
+              label={`Save ${title}`}
+            >
+              <Check size={14} />
+              Save
+            </InlineActionButton>
+            <InlineActionButton onClick={onCancel} label={`Cancel ${title}`}>
+              <X size={14} />
+              Cancel
+            </InlineActionButton>
+          </div>
+        )}
+      </div>
+
+      <div className="mt-3">
+        {isActive ? (
+          <textarea
+            autoFocus
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            rows={rows}
+            className="w-full resize-none bg-transparent text-sm leading-relaxed text-slate-700 outline-none focus:ring-0 dark:text-slate-200"
+          />
+        ) : (
+          <div className="whitespace-pre-wrap text-sm leading-relaxed text-slate-700 dark:text-slate-300">
+            {value}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function AiRewriterPage() {
   const router = useRouter();
 
   const candidateName = dummyEnhanced.header.name;
   const [enhanced, setEnhanced] = useState(dummyEnhanced);
-  const [isEditing, setIsEditing] = useState(false);
+  const [activeEditId, setActiveEditId] = useState(null);
+  const [draftValue, setDraftValue] = useState("");
 
   const encodedOriginalUrl = useMemo(() => encodeURI(ORIGINAL_CV_URL), []);
 
@@ -69,12 +239,38 @@ export default function AiRewriterPage() {
     }));
   }
 
+  function startEdit(id, currentValue) {
+    setActiveEditId(id);
+    setDraftValue(currentValue ?? "");
+  }
+
+  function cancelEdit() {
+    setActiveEditId(null);
+    setDraftValue("");
+  }
+
+  function saveEdit(id, value) {
+    if (!id) return;
+
+    if (id.startsWith("header.")) {
+      const key = id.replace("header.", "");
+      updateHeader(key, value);
+    } else {
+      updateSection(id, value);
+    }
+
+    setActiveEditId(null);
+    setDraftValue("");
+    toast.success("Section updated");
+  }
+
   function downloadProcessed() {
     const lines = [
       enhanced.header.name,
-      enhanced.header.title,
+      enhanced.header.designation,
       enhanced.header.location,
-      enhanced.header.contact,
+      enhanced.header.phone,
+      enhanced.header.email,
       "",
       ...enhanced.sections.flatMap((s) => ["## " + s.title, s.body, ""]),
     ];
@@ -144,18 +340,9 @@ export default function AiRewriterPage() {
             <CardTitle className="text-base font-semibold text-primary dark:text-slate-100">
               AI Enhanced Version
             </CardTitle>
-            <button
-              type="button"
-              onClick={() => setIsEditing((v) => !v)}
-              className={[
-                "inline-flex cursor-pointer items-center justify-center rounded-full border px-3 py-1 text-xs font-semibold transition-colors",
-                isEditing
-                  ? "border-emerald-600 bg-emerald-600 text-white hover:bg-emerald-700 dark:border-emerald-500 dark:bg-emerald-500 dark:hover:bg-emerald-600"
-                  : "border-primary/30 bg-primary/10 text-primary hover:bg-primary/15 dark:border-primary/25 dark:bg-primary/10",
-              ].join(" ")}
-            >
-              {isEditing ? "Save" : "Edit"}
-            </button>
+            <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-medium text-slate-700 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200">
+              {activeEditId ? "Editing 1 section" : "Hover sections to edit"}
+            </span>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-950">
@@ -168,60 +355,106 @@ export default function AiRewriterPage() {
                     <div
                       className={[
                         "inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-semibold",
-                        isEditing
-                          ? "bg-emerald-600 text-white"
-                          : "bg-slate-100 text-slate-700",
+                        activeEditId ? "bg-emerald-600 text-white" : "bg-slate-100 text-slate-700",
                       ].join(" ")}
                     >
                       <PencilLine size={14} />
-                      {isEditing ? "Editing" : "Read-only"}
+                      {activeEditId ? "Editing" : "Read-only"}
                     </div>
                   </div>
 
                   <div className="mt-4 text-center">
-                    <input
+                    <CvHoverEditText
+                      id="header.name"
                       value={enhanced.header.name}
-                      onChange={(e) => updateHeader("name", e.target.value)}
-                      readOnly={!isEditing}
-                      className="w-full bg-transparent text-center text-3xl font-semibold text-slate-900 outline-none read-only:cursor-not-allowed read-only:text-slate-700"
+                      draft={draftValue}
+                      setDraft={setDraftValue}
+                      isActive={activeEditId === "header.name"}
+                      onStart={startEdit}
+                      onSave={saveEdit}
+                      onCancel={cancelEdit}
+                      align="center"
+                      textClassName="text-3xl font-semibold text-slate-900"
+                      inputClassName="text-base font-semibold"
+                      placeholder="Full name"
                     />
-                    <input
-                      value={enhanced.header.title}
-                      onChange={(e) => updateHeader("title", e.target.value)}
-                      readOnly={!isEditing}
-                      className="mt-2 w-full bg-transparent text-center text-base font-medium text-slate-700 outline-none read-only:cursor-not-allowed"
-                    />
+
+                    <div className="mt-2">
+                      <CvHoverEditText
+                        id="header.designation"
+                        value={enhanced.header.designation}
+                        draft={draftValue}
+                        setDraft={setDraftValue}
+                        isActive={activeEditId === "header.designation"}
+                        onStart={startEdit}
+                        onSave={saveEdit}
+                        onCancel={cancelEdit}
+                        align="center"
+                        textClassName="text-base font-medium text-slate-700"
+                        placeholder="Designation"
+                      />
+                    </div>
+
                     <div className="mt-2 flex flex-col items-center gap-1 text-sm text-slate-600 sm:flex-row sm:justify-center">
-                      <input
+                      <CvHoverEditText
+                        id="header.location"
                         value={enhanced.header.location}
-                        onChange={(e) => updateHeader("location", e.target.value)}
-                        readOnly={!isEditing}
-                        className="w-full max-w-md bg-transparent text-center outline-none read-only:cursor-not-allowed"
+                        draft={draftValue}
+                        setDraft={setDraftValue}
+                        isActive={activeEditId === "header.location"}
+                        onStart={startEdit}
+                        onSave={saveEdit}
+                        onCancel={cancelEdit}
+                        align="center"
+                        textClassName="max-w-md"
+                        placeholder="Location"
                       />
                       <span className="hidden sm:inline">•</span>
-                      <input
-                        value={enhanced.header.contact}
-                        onChange={(e) => updateHeader("contact", e.target.value)}
-                        readOnly={!isEditing}
-                        className="w-full max-w-md bg-transparent text-center outline-none read-only:cursor-not-allowed"
+                      <CvHoverEditText
+                        id="header.phone"
+                        value={enhanced.header.phone}
+                        draft={draftValue}
+                        setDraft={setDraftValue}
+                        isActive={activeEditId === "header.phone"}
+                        onStart={startEdit}
+                        onSave={saveEdit}
+                        onCancel={cancelEdit}
+                        align="center"
+                        textClassName="max-w-md"
+                        placeholder="Phone number"
+                      />
+                      <span className="hidden sm:inline">•</span>
+                      <CvHoverEditText
+                        id="header.email"
+                        value={enhanced.header.email}
+                        draft={draftValue}
+                        setDraft={setDraftValue}
+                        isActive={activeEditId === "header.email"}
+                        onStart={startEdit}
+                        onSave={saveEdit}
+                        onCancel={cancelEdit}
+                        align="center"
+                        textClassName="max-w-md"
+                        placeholder="Email"
                       />
                     </div>
                   </div>
 
                   <div className="mt-6 space-y-6">
                     {enhanced.sections.map((s) => (
-                      <div key={s.id}>
-                        <div className="border-b border-slate-200 pb-2 text-sm font-semibold text-slate-900">
-                          {s.title}
-                        </div>
-                        <textarea
-                          value={s.body}
-                          onChange={(e) => updateSection(s.id, e.target.value)}
-                          readOnly={!isEditing}
-                          rows={s.id === "profile" ? 7 : 6}
-                          className="mt-3 w-full resize-none bg-transparent text-sm leading-relaxed text-slate-700 outline-none read-only:cursor-not-allowed"
-                        />
-                      </div>
+                      <CvHoverEditSection
+                        key={s.id}
+                        id={s.id}
+                        title={s.title}
+                        value={s.body}
+                        draft={draftValue}
+                        setDraft={setDraftValue}
+                        isActive={activeEditId === s.id}
+                        onStart={startEdit}
+                        onSave={saveEdit}
+                        onCancel={cancelEdit}
+                        rows={s.id === "profile" ? 7 : 6}
+                      />
                     ))}
                   </div>
                 </div>

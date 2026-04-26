@@ -1,6 +1,7 @@
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import ToasterClient from "@/components/ToasterClient";
+import MotionProvider from "@/components/motion/MotionProvider";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -30,7 +31,7 @@ export default function RootLayout({ children }) {
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
       <body suppressHydrationWarning className="min-h-full flex flex-col">
-        {children}
+        <MotionProvider>{children}</MotionProvider>
         <ToasterClient />
       </body>
     </html>
