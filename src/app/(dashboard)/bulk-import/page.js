@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import toast from "react-hot-toast";
+import { useMutation } from "@tanstack/react-query";
 import {
   Check,
   FileText,
@@ -22,6 +23,8 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 
+import { apiPost } from "@/lib/api";
+
 function formatCount(n) {
   return new Intl.NumberFormat().format(n);
 }
@@ -31,6 +34,21 @@ const PROCESS_STEPS = [
   "Checking the quality...",
   "Almost there...",
 ];
+
+function parseMinYears(minExpLabel) {
+  const s = String(minExpLabel || "");
+  const m = s.match(/(\d+)/);
+  if (!m) return null;
+  const n = Number(m[1]);
+  return Number.isFinite(n) ? n : null;
+}
+
+function parseSkillsList(skillsText) {
+  return String(skillsText || "")
+    .split(",")
+    .map((x) => x.trim())
+    .filter(Boolean);
+}
 
 export default function BulkImportPage() {
   const router = useRouter();
@@ -50,8 +68,35 @@ export default function BulkImportPage() {
   const totalSelected = files.length;
 
   const canSend = useMemo(() => {
-    return totalSelected > 0;
-  }, [totalSelected]);
+    const minYears = parseMinYears(minExp);
+    const skillsList = parseSkillsList(skills);
+    const job = jobRole.trim();
+    return totalSelected > 0 && minYears !== null && skillsList.length > 0 && !!job;
+  }, [jobRole, minExp, skills, totalSelected]);
+
+  const bulkImportMutation = useMutation({
+    mutationFn: async () => {
+      const minYears = parseMinYears(minExp);
+      const skillsList = parseSkillsList(skills);
+      const job = jobRole.trim();
+
+      if (!files.length) throw new Error("Please upload at least 1 CV");
+      if (minYears === null) throw new Error("Please select minimum experience");
+      if (!skillsList.length) throw new Error("Please provide required skills");
+      if (!job) throw new Error("Please provide job role");
+
+      const fd = new FormData();
+      for (const f of files) fd.append("files", f.file);
+      fd.append("requiredSkills", JSON.stringify(skillsList));
+      fd.append("jobRole", job);
+      fd.append("checkFormatting", String(!!checkFormatting));
+      fd.append("minimumYearsExperience", String(minYears));
+
+      const res = await apiPost("/bulk-import/cv", fd);
+      if (res?.success === false) throw new Error(res?.message || "Bulk import failed");
+      return res;
+    },
+  });
 
   function openPicker() {
     fileInputRef.current?.click();
@@ -86,34 +131,56 @@ export default function BulkImportPage() {
 
   function startQualityCheck() {
     if (!canSend) {
-      toast.error("Please upload at least 1 CV");
+      const minYears = parseMinYears(minExp);
+      const skillsList = parseSkillsList(skills);
+      if (!totalSelected) toast.error("Please upload at least 1 CV");
+      else if (minYears === null) toast.error("Select minimum years of experience");
+      else if (!skillsList.length) toast.error("Required skills are mandatory");
+      else if (!jobRole.trim()) toast.error("Job role is mandatory");
       return;
     }
 
     setDialogOpen(true);
     setStepIndex(0);
     setResult(null);
+    bulkImportMutation.mutate(undefined, {
+      onSuccess: (res) => {
+        const total = res?.totalUploadCount ?? files.length;
+        const passed = res?.totalQualityPassCount ?? 0;
+        const failed = res?.totalQualityFailedCount ?? 0;
+        setResult({
+          total,
+          passed,
+          failed,
+          batchId: res?.data?.batchId || null,
+          preview: res?.data?.preview || null,
+          message: res?.message || null,
+        });
+      },
+      onError: (err) => {
+        toast.error(err?.message || "Bulk import failed");
+        setDialogOpen(false);
+      },
+    });
   }
 
   useEffect(() => {
     if (!dialogOpen) return;
     if (result) return;
+    if (!bulkImportMutation.isPending) return;
 
-    const t1 = setTimeout(() => setStepIndex(1), 2000);
-    const t2 = setTimeout(() => setStepIndex(2), 4000);
-    const t3 = setTimeout(() => {
-      const total = files.length;
-      const passed = Math.max(0, Math.min(total, Math.round(total * 0.75)));
-      const failed = Math.max(0, total - passed);
-      setResult({ total, passed, failed });
-    }, 6000);
+    const t1 = setTimeout(() => setStepIndex(1), 1200);
+    const t2 = setTimeout(() => setStepIndex(2), 2600);
+    const tick = setInterval(() => {
+      setStepIndex((s) => (s + 1) % PROCESS_STEPS.length);
+    }, 2500);
 
     return () => {
       clearTimeout(t1);
       clearTimeout(t2);
-      clearTimeout(t3);
+      clearInterval(tick);
     };
-  }, [dialogOpen, files.length, result]);
+  }, [bulkImportMutation.isPending, dialogOpen, result]);
 
   function onOk() {
     setDialogOpen(false);
@@ -251,6 +318,30 @@ export default function BulkImportPage() {
                 />
               </div>
             </div>
+
+            <div className="flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 dark:border-slate-800 dark:bg-slate-900">
+              <div>
+                <div className="text-sm font-medium text-black dark:text-slate-100">
+                  Check formatting (mandatory)
+                </div>
+                <div className="text-xs text-black/60 dark:text-slate-400">
+                  Validates CV formatting rules during processing
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setCheckFormatting(true)}
+                className={[
+                  "inline-flex h-9 cursor-pointer items-center justify-center rounded-full px-4 text-sm font-semibold",
+                  checkFormatting
+                    ? "bg-emerald-600/10 text-emerald-800 dark:bg-emerald-500/15 dark:text-emerald-200"
+                    : "bg-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-200",
+                ].join(" ")}
+                aria-pressed={checkFormatting}
+              >
+                Enabled
+              </button>
+            </div>
           </CardContent>
         </Card>
       ) : null}
@@ -260,10 +351,15 @@ export default function BulkImportPage() {
           <button
             type="button"
             onClick={startQualityCheck}
+            disabled={bulkImportMutation.isPending}
             className="inline-flex w-full cursor-pointer items-center justify-center gap-2 rounded-md bg-primary px-6 py-3 text-base font-semibold text-primary-foreground transition-transform hover:scale-[1.01] sm:w-auto dark:bg-primary"
           >
-            <Sparkles size={20} />
-            Send to check quality
+            {bulkImportMutation.isPending ? (
+              <Loader2 className="animate-spin" size={20} />
+            ) : (
+              <Sparkles size={20} />
+            )}
+            {bulkImportMutation.isPending ? "Uploading..." : "Send to check quality"}
           </button>
         </div>
       ) : null}
@@ -349,6 +445,11 @@ export default function BulkImportPage() {
                 <div className="text-xl font-semibold text-black dark:text-slate-100">
                   Results
                 </div>
+                {result?.message ? (
+                  <div className="mt-1 text-sm text-black/60 dark:text-slate-400">
+                    {result.message}
+                  </div>
+                ) : null}
                 <div className="mt-4 grid grid-cols-3 gap-3">
                   <div className="rounded-xl bg-slate-50 p-3 text-center dark:bg-slate-900">
                     <div className="text-sm text-black/60 dark:text-slate-400">
@@ -387,7 +488,10 @@ export default function BulkImportPage() {
             {!result ? (
               <button
                 type="button"
-                onClick={() => setDialogOpen(false)}
+                onClick={() => {
+                  bulkImportMutation.reset();
+                  setDialogOpen(false);
+                }}
                 className="inline-flex cursor-pointer items-center justify-center rounded-md border border-slate-200 bg-white px-5 py-2.5 text-base font-medium text-slate-700 transition-colors hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-200 dark:hover:bg-slate-900"
               >
                 Cancel

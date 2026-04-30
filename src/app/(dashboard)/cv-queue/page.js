@@ -1,9 +1,9 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import toast from "react-hot-toast";
-import Image from "next/image";
 import { useRouter } from "next/navigation";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Eye,
   FileText,
@@ -25,14 +25,64 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 
+import { apiDelete, apiGet, apiPatch } from "@/lib/api";
+
 const TABS = [
   { key: "all", label: "All CVs" },
-  { key: "pending", label: "Pending" },
   { key: "passed", label: "Quality Passed" },
   { key: "failed", label: "Quality Failed" },
 ];
 
-const CV_PDF_URL = "/assets/cv/MD. AL RAKEB RASEL BOSHUNIA.pdf";
+function mapAvailability(status) {
+  if (typeof status === "boolean") return status ? "Available" : "Not available";
+  const raw = String(status || "");
+  const v = raw.toLowerCase();
+  const compact = v.replace(/[^a-z]/g, ""); // handles notAvailable, not_available, "not available"
+  if (compact === "available") return "Available";
+  if (compact === "notavailable" || compact === "unavailable") return "Not available";
+  return raw ? raw : "Not available";
+}
+
+function mapQualityStatus(status) {
+  if (typeof status === "boolean") return status ? "passed" : "failed";
+  const v = String(status || "").toLowerCase();
+  if (v === "passed" || v === "pass" || v === "true") return "passed";
+  if (v === "failed" || v === "fail" || v === "false") return "failed";
+  // No "pending" state in UI; treat unknown as failed.
+  return "failed";
+}
+
+function mapQualityCheckToRow(item) {
+  const c = item?.candidate || {};
+  const extracted = c?.extractedJson || {};
+  const skills = Array.isArray(extracted?.top_skills) ? extracted.top_skills : [];
+  const derivedStatus =
+    c?.qualityStatus !== undefined && c?.qualityStatus !== null
+      ? c.qualityStatus
+      : item?.qualityPass;
+
+  return {
+    id: item?.id || c?.id,
+    candidateId: item?.candidateId || c?.id,
+    score: item?.score ?? null,
+    name: c?.candidateName || "—",
+    email: c?.emailAddress || "—",
+    phone: c?.contactNumber || "",
+    availability: mapAvailability(c?.availabilityStatus),
+    status: mapQualityStatus(derivedStatus),
+    role: c?.jobTitle || "—",
+    location: c?.address || "—",
+    experience: c?.experienceYears ? `${c.experienceYears}+ Years Experience` : "—",
+    bio: c?.professionalProfile || "",
+    skills,
+    pdfUrl: c?.rawPdfUrl || null,
+    rawPdfPath: c?.rawPdfPath || null,
+    aiCheck: !!c?.aiCheck,
+    fullResponse: item?.fullResponse || null,
+    createdAt: item?.createdAt || c?.createdAt || null,
+    candidate: c,
+  };
+}
 
 const seed = [
   {
@@ -138,50 +188,200 @@ const seed = [
 function statusLabel(status) {
   if (status === "passed") return "Quality Passed";
   if (status === "failed") return "Quality Failed";
-  return "Pending";
+  return "Quality Failed";
 }
 
 function statusPillClasses(status) {
   if (status === "passed")
     return "border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-900/40 dark:bg-emerald-950/30 dark:text-emerald-200";
-  if (status === "failed")
-    return "border-rose-200 bg-rose-50 text-rose-800 dark:border-rose-900/40 dark:bg-rose-950/30 dark:text-rose-200";
-  return "border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-200";
+  return "border-rose-200 bg-rose-50 text-rose-800 dark:border-rose-900/40 dark:bg-rose-950/30 dark:text-rose-200";
 }
 
 function availabilityPillClasses(availability) {
-  const ok = availability === "Available";
+  const ok = mapAvailability(availability) === "Available";
   return ok
     ? "border-emerald-200 bg-emerald-50 text-emerald-900 dark:border-emerald-900/40 dark:bg-emerald-950/30 dark:text-emerald-200"
     : "border-rose-200 bg-rose-50 text-rose-900 dark:border-rose-900/40 dark:bg-rose-950/30 dark:text-rose-200";
 }
 
+function na(v) {
+  if (v === null || v === undefined) return "N/A";
+  const s = String(v).trim();
+  if (!s) return "N/A";
+  if (s === "—") return "N/A";
+  return s;
+}
+
+function truncateWords(text, maxWords) {
+  const s = na(text);
+  if (s === "N/A") return s;
+  const words = s.split(/\s+/).filter(Boolean);
+  if (words.length <= maxWords) return s;
+  return `${words.slice(0, maxWords).join(" ")}…`;
+}
+
+function toApiAvailability(availabilityLabel) {
+  return availabilityLabel === "Available" ? "available" : "notAvailable";
+}
+
+function qualityFromStatus(status) {
+  // UI has only: passed | failed
+  return { qualityPass: status === "passed" };
+}
+
+function parseExperienceYears(experienceLabel) {
+  const s = String(experienceLabel || "");
+  const m = s.match(/(\d+)/);
+  if (!m) return null;
+  const n = Number(m[1]);
+  return Number.isFinite(n) ? n : null;
+}
+
+function buildPayloadFromRow(row) {
+  const { qualityPass } = qualityFromStatus(row.status);
+  return {
+    qualityPass,
+    availabilityStatus: toApiAvailability(row.availability),
+    // candidate fields (flat) - backend validates this shape
+    candidateName: row.name || undefined,
+    emailAddress: row.email || undefined,
+    contactNumber: row.phone || undefined,
+    jobTitle: row.role || undefined,
+    address: row.location || undefined,
+    experienceYears: parseExperienceYears(row.experience),
+    professionalProfile: row.bio || undefined,
+  };
+}
+
+function buildPayloadFromPatch(prevRow, nextRow, changedKeys) {
+  const payload = {};
+
+  for (const k of changedKeys) {
+    if (k === "status") {
+      const { qualityPass } = qualityFromStatus(nextRow.status);
+      payload.qualityPass = qualityPass;
+    }
+    if (k === "availability") {
+      payload.availabilityStatus = toApiAvailability(nextRow.availability);
+    }
+    if (k === "name") payload.candidateName = nextRow.name;
+    if (k === "email") payload.emailAddress = nextRow.email;
+    if (k === "phone") payload.contactNumber = nextRow.phone;
+    if (k === "role") payload.jobTitle = nextRow.role;
+    if (k === "location") payload.address = nextRow.location;
+    if (k === "bio") payload.professionalProfile = nextRow.bio;
+    if (k === "experience")
+      payload.experienceYears = parseExperienceYears(nextRow.experience);
+  }
+
+  return payload;
+}
+
 export default function CvQueuePage() {
   const router = useRouter();
-  const [rows, setRows] = useState(seed);
+  const queryClient = useQueryClient();
+  const [rows, setRows] = useState([]);
   const [activeTab, setActiveTab] = useState("all");
   const [q, setQ] = useState("");
+  const [availabilityFilter, setAvailabilityFilter] = useState("all");
+  const [minScore, setMinScore] = useState("");
   const [profileOpen, setProfileOpen] = useState(false);
   const [editMode, setEditMode] = useState(false);
   const [selectedId, setSelectedId] = useState(null);
   const [draft, setDraft] = useState(null);
 
+  const qualityChecksQuery = useQuery({
+    queryKey: ["quality-checks", "all"],
+    queryFn: async () => {
+      const extractArray = (res) => {
+        const d = res?.data ?? res;
+        if (Array.isArray(d)) return d;
+        if (Array.isArray(d?.items)) return d.items;
+        if (Array.isArray(d?.results)) return d.results;
+        if (Array.isArray(d?.rows)) return d.rows;
+        if (Array.isArray(d?.data)) return d.data;
+        return [];
+      };
+
+      // Some backends validate/deny unknown query params. Try with a larger limit,
+      // but gracefully fall back to no params if it 400s.
+      try {
+        const res = await apiGet("/quality-checks/all", {
+          params: { limit: 200 },
+        });
+        if (res?.success === false)
+          throw new Error(res?.message || "Failed to load CVs");
+        return extractArray(res);
+      } catch (err) {
+        if (err?.status !== 400) throw err;
+        const res = await apiGet("/quality-checks/all");
+        if (res?.success === false) throw new Error(res?.message || "Failed to load CVs");
+        return extractArray(res);
+      }
+    },
+    staleTime: 20_000,
+  });
+
+  const updateQualityCheckMutation = useMutation({
+    mutationFn: async ({ id, payload }) => {
+      const res = await apiPatch(`/quality-checks/${id}`, payload);
+      if (res?.success === false) throw new Error(res?.message || "Update failed");
+      return res?.data ?? res;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["quality-checks", "all"] });
+    },
+  });
+
+  const deleteQualityCheckMutation = useMutation({
+    mutationFn: async (id) => {
+      const res = await apiDelete(`/quality-checks/${id}`);
+      if (res?.success === false) throw new Error(res?.message || "Delete failed");
+      return res?.data ?? res;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["quality-checks", "all"] });
+    },
+  });
+
+  useEffect(() => {
+    if (qualityChecksQuery.isLoading) return;
+    if (qualityChecksQuery.isError) return;
+    if (!qualityChecksQuery.data) return;
+    setRows(qualityChecksQuery.data.map(mapQualityCheckToRow));
+  }, [
+    qualityChecksQuery.data,
+    qualityChecksQuery.isError,
+    qualityChecksQuery.isLoading,
+  ]);
+
   const filtered = useMemo(() => {
     const query = q.trim().toLowerCase();
+    const min = minScore === "" ? null : Number(minScore);
     return rows.filter((row) => {
       const tabOk =
         activeTab === "all" ? true : activeTab === row.status;
-      const qOk = query ? row.name.toLowerCase().includes(query) : true;
-      return tabOk && qOk;
+      const hay = [row.name, row.email, row.role, row.location]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+      const qOk = query ? hay.includes(query) : true;
+      const availOk =
+        availabilityFilter === "all"
+          ? true
+          : availabilityFilter === "available"
+            ? row.availability === "Available"
+            : row.availability !== "Available";
+      const scoreOk = min === null ? true : Number(row.score ?? -1) >= min;
+      return tabOk && qOk && availOk && scoreOk;
     });
-  }, [activeTab, q, rows]);
+  }, [activeTab, availabilityFilter, minScore, q, rows]);
 
   const counts = useMemo(() => {
     const all = rows.length;
     const passed = rows.filter((r) => r.status === "passed").length;
     const failed = rows.filter((r) => r.status === "failed").length;
-    const pending = rows.filter((r) => r.status === "pending").length;
-    return { all, passed, failed, pending };
+    return { all, passed, failed };
   }, [rows]);
 
   function generateCv(name) {
@@ -196,28 +396,106 @@ export default function CvQueuePage() {
     setProfileOpen(true);
   }
 
-  function viewCv(name) {
-    const url = encodeURI(CV_PDF_URL);
+  function viewCv(rowOrUrl) {
+    const url =
+      typeof rowOrUrl === "string"
+        ? rowOrUrl
+        : rowOrUrl?.pdfUrl || rowOrUrl?.rawPdfPath || "";
+    if (!url) {
+      toast.error("No CV file available for this candidate");
+      return;
+    }
     const win = window.open(url, "_blank", "noopener,noreferrer");
     // if (!win) toast.error("Popup blocked. Allow popups to view the CV.");
   }
 
-  function onDelete() {
+  async function onDelete() {
     if (!draft?.id) return;
-    const name = draft.name;
-    setRows((prev) => prev.filter((r) => r.id !== draft.id));
+    if (deleteQualityCheckMutation.isPending) return;
+
+    const name = draft?.name || "this CV";
+    const id = draft.id;
+
+    const prevRows = rows;
+    setRows((prev) => prev.filter((r) => r.id !== id));
     setProfileOpen(false);
-    toast.success(`Deleted ${name}`);
+
+    deleteQualityCheckMutation.mutate(id, {
+      onSuccess: () => {
+        toast.success("Deleted successfully");
+      },
+      onError: (err) => {
+        setRows(prevRows);
+        toast.error(err?.message || "Delete failed");
+      },
+    });
   }
 
   function onSave() {
     if (!draft?.id) return;
-    setRows((prev) => prev.map((r) => (r.id === draft.id ? draft : r)));
-    setEditMode(false);
-    toast.success("Saved changes");
+    const prevRow = rows.find((r) => r.id === draft.id);
+    const nextRow = { ...(prevRow || {}), ...draft };
+
+    // Optimistic update
+    setRows((prev) => prev.map((r) => (r.id === draft.id ? nextRow : r)));
+
+    updateQualityCheckMutation.mutate(
+      { id: draft.id, payload: buildPayloadFromRow(nextRow) },
+      {
+        onSuccess: (updated) => {
+          // If backend returns full updated entity, sync from it. Otherwise keep optimistic row.
+          if (updated && (updated?.candidate || updated?.id)) {
+            const mapped = mapQualityCheckToRow(updated);
+            setRows((prev) => prev.map((r) => (r.id === draft.id ? mapped : r)));
+            setDraft(mapped);
+          }
+          setEditMode(false);
+          toast.success("Saved changes");
+        },
+        onError: (err) => {
+          if (prevRow) {
+            setRows((prev) => prev.map((r) => (r.id === draft.id ? prevRow : r)));
+            setDraft(prevRow);
+          }
+          toast.error(err?.message || "Save failed");
+        },
+      }
+    );
+  }
+
+  function persistRowPatch(id, patch, changedKeys, successMessage) {
+    const prevRow = rows.find((r) => r.id === id);
+    if (!prevRow) return;
+    const nextRow = { ...prevRow, ...patch };
+    const payload = buildPayloadFromPatch(prevRow, nextRow, changedKeys);
+
+    // Optimistic update
+    setRows((prev) => prev.map((r) => (r.id === id ? nextRow : r)));
+    if (draft?.id === id) setDraft(nextRow);
+
+    updateQualityCheckMutation.mutate(
+      { id, payload },
+      {
+        onSuccess: (updated) => {
+          // If backend returns the full entity, keep UI 100% synced.
+          if (updated && (updated?.candidate || updated?.id)) {
+            const mapped = mapQualityCheckToRow(updated);
+            setRows((prev) => prev.map((r) => (r.id === id ? mapped : r)));
+            if (draft?.id === id) setDraft(mapped);
+          }
+          if (successMessage) toast.success(successMessage);
+        },
+        onError: (err) => {
+          setRows((prev) => prev.map((r) => (r.id === id ? prevRow : r)));
+          if (draft?.id === id) setDraft(prevRow);
+          toast.error(err?.message || "Update failed");
+        },
+      }
+    );
   }
 
   function updateRowField(id, patch) {
+    // Keep for local-only updates (if needed elsewhere)
     setRows((prev) => prev.map((r) => (r.id === id ? { ...r, ...patch } : r)));
   }
 
@@ -241,12 +519,12 @@ export default function CvQueuePage() {
         </div>
 
         <div className="rounded-2xl border border-slate-200 bg-white px-5 py-4 dark:border-slate-800 dark:bg-slate-950">
-          <div className="text-sm font-medium text-black/60 dark:text-slate-400">
-            Total CVs uploaded
-          </div>
-          <div className="mt-1 text-3xl font-semibold text-primary dark:text-primary">
-            {counts.all}
-            </div>
+          <span className="text-sm font-medium text-black/60 dark:text-slate-400">
+            Total CVs uploaded :
+          </span>
+          <span className="mt-1 text-sm font-semibold text-primary dark:text-primary">
+             {counts.all}
+            </span>
         </div>
       </div>
 
@@ -259,48 +537,87 @@ export default function CvQueuePage() {
           <input
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            placeholder="Search by candidate name..."
+            placeholder="Search by name, email, job title..."
             className="h-12 w-full rounded-xl border border-slate-200 bg-white pl-11 pr-3 text-base text-slate-900 outline-none focus:ring-2 focus:ring-primary/30 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:placeholder:text-slate-500 dark:focus:ring-primary/40"
           />
         </div>
 
-        <div className="flex flex-wrap gap-2">
-          {TABS.map((t) => {   
-            const active = activeTab === t.key;
-            const count =
-              t.key === "all"
-                ? counts.all
-                : t.key === "passed"
-                  ? counts.passed
-                  : t.key === "failed"
-                    ? counts.failed
-                    : counts.pending;
-            return (
-              <button
-                key={t.key}
-                type="button"
-                onClick={() => setActiveTab(t.key)}
-                className={[
-                  "inline-flex cursor-pointer items-center gap-2 rounded-xl border px-4 py-2 text-base font-medium transition-colors",
-                  active
-                    ? "border-primary bg-primary text-primary-foreground dark:border-primary dark:bg-primary dark:text-primary-foreground"
-                    : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-200 dark:hover:bg-slate-900",
-                ].join(" ")}
-              >
-                <span>{t.label}</span>
-                <span
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between py-5">
+          <div className="flex flex-wrap gap-2">
+            {TABS.map((t) => {
+              const active = activeTab === t.key;
+              const count =
+                t.key === "all"
+                  ? counts.all
+                  : t.key === "passed"
+                    ? counts.passed
+                    : counts.failed;
+              return (
+                <button
+                  key={t.key}
+                  type="button"
+                  onClick={() => setActiveTab(t.key)}
                   className={[
-                    "rounded-full px-2 py-0.5 text-sm",
+                    "inline-flex cursor-pointer items-center gap-2 rounded-xl border px-4 py-2 text-base font-medium transition-colors",
                     active
-                      ? "bg-white/20 text-white"
-                      : "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200",
+                      ? "border-primary bg-primary text-primary-foreground dark:border-primary dark:bg-primary dark:text-primary-foreground"
+                      : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-200 dark:hover:bg-slate-900",
                   ].join(" ")}
                 >
-                  {count}
-                </span>
-              </button>
-            );
-          })}
+                  <span>{t.label}</span>
+                  <span
+                    className={[
+                      "rounded-full px-2 py-0.5 text-sm",
+                      active
+                        ? "bg-white/20 text-white"
+                        : "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200",
+                    ].join(" ")}
+                  >
+                    {count}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="flex flex-wrap items-center gap-3 lg:justify-end">
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-medium text-slate-700 dark:text-slate-200">
+                Availability
+              </span>
+              <select
+                value={availabilityFilter}
+                onChange={(e) => setAvailabilityFilter(e.target.value)}
+                className="h-10 rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none focus:ring-2 focus:ring-primary/30 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100"
+              >
+                <option value="all">All</option>
+                <option value="available">Available</option>
+                <option value="not_available">Not available</option>
+              </select>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-medium text-slate-700 dark:text-slate-200">
+                Min score
+              </span>
+              <input
+                value={minScore}
+                onChange={(e) => setMinScore(e.target.value)}
+                inputMode="numeric"
+                placeholder="0-100"
+                className="h-10 w-24 rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none focus:ring-2 focus:ring-primary/30 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100"
+              />
+            </div>
+
+            <button
+              type="button"
+              onClick={() => qualityChecksQuery.refetch()}
+              disabled={qualityChecksQuery.isFetching}
+              className="inline-flex h-10 cursor-pointer items-center justify-center rounded-xl border border-slate-200 bg-white px-4 text-sm font-medium text-slate-700 shadow-sm transition-colors hover:bg-slate-50 disabled:opacity-60 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-200 dark:hover:bg-slate-900"
+            >
+              {qualityChecksQuery.isFetching ? "Refreshing..." : "Refresh"}
+            </button>
+          </div>
         </div>
       </div>
 
@@ -319,6 +636,17 @@ export default function CvQueuePage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
+              {qualityChecksQuery.isError ? (
+                <tr>
+                  <td
+                    colSpan={6}
+                    className="px-5 py-6 text-sm text-rose-700 dark:text-rose-200"
+                  >
+                    {qualityChecksQuery.error?.message ||
+                      "Failed to load CVs. Please try again."}
+                  </td>
+                </tr>
+              ) : null}
               {filtered.map((row) => (
                 <tr
                   key={row.id}
@@ -347,15 +675,18 @@ export default function CvQueuePage() {
                       value={row.status}
                       onChange={(e) => {
                         const next = e.target.value;
-                        updateRowField(row.id, { status: next });
-                        toast.success(`Quality updated for ${row.name}`);
+                        persistRowPatch(
+                          row.id,
+                          { status: next },
+                          ["status"],
+                          `Quality updated for ${row.name}`
+                        );
                       }}
                       className={[
                         "mr-2 h-9 cursor-pointer rounded-full border px-4 pr-9 text-xs font-semibold outline-none transition focus:ring-2 focus:ring-primary/25",
                         statusPillClasses(row.status),
                       ].join(" ")}
                     >
-                      <option value="pending">Pending</option>
                       <option value="passed">Quality Passed</option>
                       <option value="failed">Quality Failed</option>
                     </select>
@@ -365,8 +696,12 @@ export default function CvQueuePage() {
                       value={row.availability}
                       onChange={(e) => {
                         const next = e.target.value;
-                        updateRowField(row.id, { availability: next });
-                        toast.success(`Availability updated for ${row.name}`);
+                        persistRowPatch(
+                          row.id,
+                          { availability: next },
+                          ["availability"],
+                          `Availability updated for ${row.name}`
+                        );
                       }}
                       className={[
                         "mr-2 h-9 cursor-pointer rounded-full border px-4 pr-9 text-xs font-semibold outline-none transition focus:ring-2 focus:ring-primary/25",
@@ -470,15 +805,18 @@ export default function CvQueuePage() {
                     value={row.status}
                     onChange={(e) => {
                       const next = e.target.value;
-                      updateRowField(row.id, { status: next });
-                      toast.success(`Quality updated for ${row.name}`);
+                      persistRowPatch(
+                        row.id,
+                        { status: next },
+                        ["status"],
+                        `Quality updated for ${row.name}`
+                      );
                     }}
                     className={[
                       "h-9 w-full cursor-pointer rounded-full border px-4 pr-9 text-xs font-semibold outline-none transition focus:ring-2 focus:ring-primary/25",
                       statusPillClasses(row.status),
                     ].join(" ")}
                   >
-                    <option value="pending">Pending</option>
                     <option value="passed">Quality Passed</option>
                     <option value="failed">Quality Failed</option>
                   </select>
@@ -493,8 +831,12 @@ export default function CvQueuePage() {
                     value={row.availability}
                     onChange={(e) => {
                       const next = e.target.value;
-                      updateRowField(row.id, { availability: next });
-                      toast.success(`Availability updated for ${row.name}`);
+                      persistRowPatch(
+                        row.id,
+                        { availability: next },
+                        ["availability"],
+                        `Availability updated for ${row.name}`
+                      );
                     }}
                     className={[
                       "h-9 w-full cursor-pointer rounded-full border px-4 pr-9 text-xs font-semibold outline-none transition focus:ring-2 focus:ring-primary/25",
@@ -529,8 +871,11 @@ export default function CvQueuePage() {
       </div>
 
       <Dialog open={profileOpen} onOpenChange={setProfileOpen}>
-        <DialogContent className="sm:max-w-5xl" showCloseButton>
-          <DialogHeader>
+        <DialogContent
+          className="sm:max-w-5xl max-h-[85vh] overflow-y-auto"
+          showCloseButton
+        >
+          <DialogHeader className="sticky top-0 z-10 bg-white/95 backdrop-blur dark:bg-slate-950/95">
             <DialogTitle className="text-2xl text-black dark:text-slate-100">
               Candidate Profile
             </DialogTitle>
@@ -545,23 +890,14 @@ export default function CvQueuePage() {
               <div className="rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-950">
                 <div className="flex flex-col gap-5 md:flex-row md:items-center md:justify-between">
                   <div className="flex items-start gap-4">
-                    <div className="relative h-20 w-20 overflow-hidden rounded-2xl ring-1 ring-slate-200 dark:ring-slate-800">
-                      <Image
-                        src="/assets/profile-pic.jpg"
-                        alt="Profile"
-                        fill
-                        className="object-cover"
-                        priority
-                      />
-                    </div>
                     <div className="min-w-0">
                       {!editMode ? (
                         <>
                           <div className="truncate text-2xl font-semibold text-black dark:text-slate-100">
-                            {form.name}
+                            {na(form.name)}
                           </div>
                           <div className="mt-1 text-base font-medium text-primary dark:text-primary">
-                            {form.role}
+                            {na(form.role)}
                           </div>
                         </>
                       ) : (
@@ -616,13 +952,12 @@ export default function CvQueuePage() {
                                 Quality
                               </label>
                               <select
-                                value={draft?.status || "pending"}
+                                value={draft?.status || "passed"}
                                 onChange={(e) =>
                                   setDraft((d) => ({ ...d, status: e.target.value }))
                                 }
                                 className="h-11 w-full cursor-pointer rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none focus:ring-2 focus:ring-primary/30 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:focus:ring-primary/40"
                               >
-                                <option value="pending">Pending</option>
                                 <option value="passed">Quality Passed</option>
                                 <option value="failed">Quality Failed</option>
                               </select>
@@ -653,7 +988,7 @@ export default function CvQueuePage() {
                         <div className="flex items-center gap-2">
                           <MapPin size={16} className="text-black/50 dark:text-slate-400" />
                           {!editMode ? (
-                            <span className="truncate">{form.location}</span>
+                            <span className="truncate">{na(form.location)}</span>
                           ) : (
                             <input
                               value={draft?.location || ""}
@@ -667,7 +1002,7 @@ export default function CvQueuePage() {
                         <div className="flex items-center gap-2">
                           <UserRound size={16} className="text-black/50 dark:text-slate-400" />
                           {!editMode ? (
-                            <span className="truncate">{form.experience}</span>
+                            <span className="truncate">{na(form.experience)}</span>
                           ) : (
                             <input
                               value={draft?.experience || ""}
@@ -681,7 +1016,7 @@ export default function CvQueuePage() {
                         <div className="flex items-center gap-2">
                           <Mail size={16} className="text-black/50 dark:text-slate-400" />
                           {!editMode ? (
-                            <span className="truncate">{form.email}</span>
+                            <span className="truncate">{na(form.email)}</span>
                           ) : (
                             <input
                               value={draft?.email || ""}
@@ -708,7 +1043,7 @@ export default function CvQueuePage() {
                     </div>
                     {!editMode ? (
                       <div className="flex items-center gap-2 text-sm text-black/60 dark:text-slate-400">
-                        <Phone size={16} /> {form.phone}
+                        <Phone size={16} /> {na(form.phone)}
                       </div>
                     ) : (
                       <div className="w-full sm:max-w-xs">
@@ -732,7 +1067,7 @@ export default function CvQueuePage() {
                     </div>
                     {!editMode ? (
                       <div className="text-sm leading-relaxed text-black/70 dark:text-slate-300">
-                        {form.bio}
+                        {truncateWords(form.bio, 200)}
                       </div>
                     ) : (
                       <textarea
@@ -754,14 +1089,20 @@ export default function CvQueuePage() {
 
                   {!editMode ? (
                     <div className="mt-4 flex flex-wrap gap-2">
-                      {form.skills?.map((s) => (
-                        <span
-                          key={s}
-                          className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-medium text-slate-800 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100"
-                        >
-                          {s}
+                      {Array.isArray(form.skills) && form.skills.length ? (
+                        form.skills.map((s) => (
+                          <span
+                            key={s}
+                            className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-medium text-slate-800 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100"
+                          >
+                            {s}
+                          </span>
+                        ))
+                      ) : (
+                        <span className="text-sm text-black/60 dark:text-slate-400">
+                          N/A
                         </span>
-                      ))}
+                      )}
                     </div>
                   ) : (
                     <div className="mt-4 space-y-2">
@@ -800,7 +1141,7 @@ export default function CvQueuePage() {
             </button>
             <button
               type="button"
-              onClick={() => viewCv(form?.name || "")}
+              onClick={() => viewCv(form)}
               className="inline-flex cursor-pointer items-center justify-center gap-2 rounded-xl border border-sky-200 bg-sky-50 px-5 py-3 text-base font-semibold text-sky-900 transition-colors hover:bg-sky-100 dark:border-sky-900/40 dark:bg-sky-950/25 dark:text-sky-200 dark:hover:bg-sky-950/40"
             >
               <FileText size={18} />
