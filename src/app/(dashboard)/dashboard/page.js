@@ -1,4 +1,8 @@
+"use client";
+
 import Link from "next/link";
+import { useMemo } from "react";
+import { useQuery } from "@tanstack/react-query";
 import {
   CheckCircle2,
   Clock,
@@ -11,107 +15,143 @@ import {
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
-const stats = [
-  {
-    title: "Total CV Import",
-    value: "1,284",
-    icon: FileUp,
-    className:
-      "border-indigo-200 bg-indigo-50 dark:border-indigo-900/50 dark:bg-indigo-950/40",
-    iconClass:
-      "bg-indigo-600/10 text-indigo-700 dark:bg-indigo-500/15 dark:text-indigo-300",
-  },
-  {
-    title: "Quality Passed",
-    value: "1,032",
-    icon: ShieldCheck,
-    className:
-      "border-emerald-200 bg-emerald-50 dark:border-emerald-900/50 dark:bg-emerald-950/40",
-    iconClass:
-      "bg-emerald-600/10 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300",
-  },
-  {
-    title: "Quality Failed",
-    value: "87",
-    icon: ShieldX,
-    className:
-      "border-rose-200 bg-rose-50 dark:border-rose-900/50 dark:bg-rose-950/40",
-    iconClass:
-      "bg-rose-600/10 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300",
-  },
-  {
-    title: "Pending Review",
-    value: "165",
-    icon: Clock,
-    className:
-      "border-amber-200 bg-amber-50 dark:border-amber-900/50 dark:bg-amber-950/40",
-    iconClass:
-      "bg-amber-600/10 text-amber-800 dark:bg-amber-500/15 dark:text-amber-300",
-  },
-  {
-    title: "CV Submitted",
-    value: "978",
-    icon: Send,
-    className:
-      "border-sky-200 bg-sky-50 dark:border-sky-900/50 dark:bg-sky-950/40",
-    iconClass:
-      "bg-sky-600/10 text-sky-800 dark:bg-sky-500/15 dark:text-sky-300",
-  },
-  {
-    title: "Success Rate",
-    value: "92.4%",
-    icon: Percent,
-    className:
-      "border-violet-200 bg-violet-50 dark:border-violet-900/50 dark:bg-violet-950/40",
-    iconClass:
-      "bg-violet-600/10 text-violet-800 dark:bg-violet-500/15 dark:text-violet-300",
-  },
-];
+import { apiGet } from "@/lib/api";
 
-const activities = [
-  {
-    title: "CV processed: Tahira Tabassum",
-    subtitle: "System",
-    time: "31 mins ago",
-    dotClass: "bg-emerald-500",
-    rowClass:
-      "bg-indigo-50/60 dark:bg-indigo-950/25 border-indigo-100 dark:border-indigo-900/40",
-  },
-  {
-    title: "CV submitted: Arif Hossain",
-    subtitle: "Automation",
-    time: "54 mins ago",
-    dotClass: "bg-sky-500",
-    rowClass:
-      "bg-sky-50/70 dark:bg-sky-950/25 border-sky-100 dark:border-sky-900/40",
-  },
-  {
-    title: "Quality passed: Nabila Rahman",
-    subtitle: "QA Engine",
-    time: "1 hr ago",
-    dotClass: "bg-emerald-500",
-    rowClass:
-      "bg-emerald-50/70 dark:bg-emerald-950/25 border-emerald-100 dark:border-emerald-900/40",
-  },
-  {
-    title: "Pending review: Imran Ahmed",
-    subtitle: "Reviewer Queue",
-    time: "2 hrs ago",
-    dotClass: "bg-amber-500",
-    rowClass:
-      "bg-amber-50/70 dark:bg-amber-950/25 border-amber-100 dark:border-amber-900/40",
-  },
-  {
-    title: "Quality failed: Farzana Akter",
-    subtitle: "Validation",
-    time: "3 hrs ago",
-    dotClass: "bg-rose-500",
-    rowClass:
-      "bg-rose-50/70 dark:bg-rose-950/25 border-rose-100 dark:border-rose-900/40",
-  },
-];
+function formatCompactNumber(n) {
+  if (n === null || n === undefined) return "—";
+  try {
+    return new Intl.NumberFormat().format(Number(n));
+  } catch {
+    return String(n);
+  }
+}
+
+function timeAgo(iso) {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const seconds = Math.round((Date.now() - d.getTime()) / 1000);
+  const rtf = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
+
+  const mins = Math.round(seconds / 60);
+  if (Math.abs(mins) < 60) return rtf.format(-mins, "minute");
+
+  const hrs = Math.round(mins / 60);
+  if (Math.abs(hrs) < 24) return rtf.format(-hrs, "hour");
+
+  const days = Math.round(hrs / 24);
+  return rtf.format(-days, "day");
+}
+
+function activityStyle(action) {
+  switch (action) {
+    case "CANDIDATE_UPLOAD":
+      return {
+        dotClass: "bg-sky-500",
+        rowClass:
+          "bg-sky-50/70 dark:bg-sky-950/25 border-sky-100 dark:border-sky-900/40",
+      };
+    case "CONTACT_IMPORT":
+      return {
+        dotClass: "bg-violet-500",
+        rowClass:
+          "bg-violet-50/70 dark:bg-violet-950/25 border-violet-100 dark:border-violet-900/40",
+      };
+    case "ORGANIZATION_IMPORT":
+      return {
+        dotClass: "bg-amber-500",
+        rowClass:
+          "bg-amber-50/70 dark:bg-amber-950/25 border-amber-100 dark:border-amber-900/40",
+      };
+    default:
+      return {
+        dotClass: "bg-emerald-500",
+        rowClass:
+          "bg-emerald-50/70 dark:bg-emerald-950/25 border-emerald-100 dark:border-emerald-900/40",
+      };
+  }
+}
 
 export default function DashboardPage() {
+  const { data, isLoading, isError, error } = useQuery({
+    queryKey: ["dashboard-overview", "stats"],
+    queryFn: async () => {
+      const res = await apiGet("/dashboard-overview/stats");
+      if (!res?.success) throw new Error(res?.message || "Failed to fetch stats");
+      return res.data;
+    },
+  });
+
+  const stats = useMemo(() => {
+    const d = data || {};
+    const valueOrLoading = (v, suffix = "") =>
+      isLoading ? "…" : `${suffix ? `${v ?? "—"}${suffix}` : v ?? "—"}`;
+
+    return [
+      {
+        title: "Total CV Import",
+        value: isLoading ? "…" : formatCompactNumber(d.totalCvImport),
+        icon: FileUp,
+        className:
+          "border-indigo-200 bg-indigo-50 dark:border-indigo-900/50 dark:bg-indigo-950/40",
+        iconClass:
+          "bg-indigo-600/10 text-indigo-700 dark:bg-indigo-500/15 dark:text-indigo-300",
+      },
+      {
+        title: "Quality Passed",
+        value: isLoading ? "…" : formatCompactNumber(d.qualityPassed),
+        icon: ShieldCheck,
+        className:
+          "border-emerald-200 bg-emerald-50 dark:border-emerald-900/50 dark:bg-emerald-950/40",
+        iconClass:
+          "bg-emerald-600/10 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300",
+      },
+      {
+        title: "Quality Failed",
+        value: isLoading ? "…" : formatCompactNumber(d.qualityFailed),
+        icon: ShieldX,
+        className:
+          "border-rose-200 bg-rose-50 dark:border-rose-900/50 dark:bg-rose-950/40",
+        iconClass:
+          "bg-rose-600/10 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300",
+      },
+      {
+        title: "CV Submitted",
+        value: isLoading ? "…" : formatCompactNumber(d.cvSubmitted),
+        icon: Send,
+        className:
+          "border-sky-200 bg-sky-50 dark:border-sky-900/50 dark:bg-sky-950/40",
+        iconClass:
+          "bg-sky-600/10 text-sky-800 dark:bg-sky-500/15 dark:text-sky-300",
+      },
+      {
+        title: "Success Rate",
+        value: isLoading ? "…" : d.successRate ?? "—",
+        icon: Percent,
+        className:
+          "border-violet-200 bg-violet-50 dark:border-violet-900/50 dark:bg-violet-950/40",
+        iconClass:
+          "bg-violet-600/10 text-violet-800 dark:bg-violet-500/15 dark:text-violet-300",
+      },
+    ];
+  }, [data, isLoading]);
+
+  const activities = useMemo(() => {
+    if (isLoading) return [];
+    const logs = data?.latestActivityLogs || [];
+    return logs.map((log) => {
+      const userLabel = log?.user?.name || log?.user?.email || "System";
+      const { dotClass, rowClass } = activityStyle(log?.action);
+      return {
+        id: log?.id || `${log?.createdAt}-${log?.action}`,
+        title: log?.message || log?.action || "Activity",
+        subtitle: userLabel,
+        time: log?.createdAt ? timeAgo(log.createdAt) : "",
+        dotClass,
+        rowClass,
+      };
+    });
+  }, [data, isLoading]);
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
@@ -186,9 +226,21 @@ export default function DashboardPage() {
           </button>
         </CardHeader>
         <CardContent className="space-y-3">
+          {isError ? (
+            <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700 dark:border-rose-900/50 dark:bg-rose-950/30 dark:text-rose-200">
+              {error?.message || "Failed to load dashboard activities."}
+            </div>
+          ) : null}
+
+          {isLoading ? (
+            <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-200">
+              Loading dashboard stats...
+            </div>
+          ) : null}
+
           {activities.map((a) => (
             <div
-              key={a.title}
+              key={a.id}
               className={[
                 "flex items-center justify-between gap-4 rounded-xl border px-4 py-3",
                 a.rowClass,

@@ -246,7 +246,7 @@ export default function CvQueuePage() {
           </div>
           <div className="mt-1 text-3xl font-semibold text-primary dark:text-primary">
             {counts.all}
-          </div>
+            </div>
         </div>
       </div>
 
@@ -265,16 +265,16 @@ export default function CvQueuePage() {
         </div>
 
         <div className="flex flex-wrap gap-2">
-          {TABS.map((t) => {
+          {TABS.map((t) => {   
             const active = activeTab === t.key;
             const count =
               t.key === "all"
                 ? counts.all
                 : t.key === "passed"
-                ? counts.passed
-                : t.key === "failed"
-                ? counts.failed
-                : counts.pending;
+                  ? counts.passed
+                  : t.key === "failed"
+                    ? counts.failed
+                    : counts.pending;
             return (
               <button
                 key={t.key}

@@ -12,23 +12,22 @@ function applyTheme(theme) {
 }
 
 export default function ThemeToggle() {
-  const [theme, setTheme] = useState("light");
-
-  useEffect(() => {
+  const [theme, setTheme] = useState(() => {
     try {
       const saved = window.localStorage.getItem(THEME_KEY);
-      const initial = saved === "dark" ? "dark" : "light";
-      setTheme(initial);
-      applyTheme(initial);
+      return saved === "dark" ? "dark" : "light";
     } catch {
-      applyTheme("light");
+      return "light";
     }
-  }, []);
+  });
+
+  useEffect(() => {
+    applyTheme(theme);
+  }, [theme]);
 
   function toggle() {
     const next = theme === "dark" ? "light" : "dark";
     setTheme(next);
-    applyTheme(next);
     try {
       window.localStorage.setItem(THEME_KEY, next);
     } catch {
