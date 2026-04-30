@@ -2,10 +2,18 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { ChevronDown, LogOut, Settings, User } from "lucide-react";
+import toast from "react-hot-toast";
+import { useQueryClient } from "@tanstack/react-query";
+
+import { apiPost, clearAuthCookies, clearTokens } from "@/lib/api";
 
 export default function UserMenu() {
+  const router = useRouter();
+  const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
+  const [loggingOut, setLoggingOut] = useState(false);
   const ref = useRef(null);
 
   useEffect(() => {
@@ -23,6 +31,24 @@ export default function UserMenu() {
       document.removeEventListener("keydown", onKeyDown);
     };
   }, []);
+
+  async function onLogout() {
+    if (loggingOut) return;
+    setLoggingOut(true);
+    try {
+      await apiPost("/auth/logout", {});
+    } catch (e) {
+      // Even if backend logout fails, we still clear local tokens.
+    } finally {
+      clearTokens();
+      clearAuthCookies();
+      queryClient.clear();
+      setOpen(false);
+      setLoggingOut(false);
+      toast.success("Logged out");
+      router.replace("/login");
+    }
+  }
 
   return (
     <div ref={ref} className="relative">
@@ -57,15 +83,16 @@ export default function UserMenu() {
             <Settings size={16} className="text-slate-500 dark:text-slate-400" />
             Settings
           </Link>
-          <Link
+          <button
             role="menuitem"
-            href="/login"
+            type="button"
             className="flex cursor-pointer items-center gap-2 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50 dark:text-slate-200 dark:hover:bg-slate-900"
-            onClick={() => setOpen(false)}
+            onClick={onLogout}
+            disabled={loggingOut}
           >
             <LogOut size={16} className="text-slate-500 dark:text-slate-400" />
-            Logout
-          </Link>
+            {loggingOut ? "Logging out..." : "Logout"}
+          </button>
         </div>
       ) : null}
     </div>

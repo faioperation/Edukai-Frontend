@@ -3,6 +3,9 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { FaEye, FaEyeSlash } from "react-icons/fa";
+import toast from "react-hot-toast";
+
+import { apiPost, setTokens } from "@/lib/api";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -13,21 +16,45 @@ export default function LoginPage() {
   const [error, setError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  function handleLogin() {
+  async function handleLogin() {
     if (!email.trim() || !password) {
       setError("Please enter email and password");
       return;
     }
 
+    const res = await apiPost("/auth/login", { email: email.trim(), password }, { auth: false });
+
+    console.log(res);
+
+    if (!res?.success) {
+      throw new Error(res?.message || "Login failed");
+    }
+
+    const accessToken = res?.data?.accessToken;
+    const refreshToken = res?.data?.refreshToken;
+
+    if (!accessToken || !refreshToken) {
+      throw new Error("Login did not return tokens");
+    }
+
+    setTokens({ accessToken, refreshToken });
     router.push("/dashboard");
   }
 
-  function onSubmit(e) {
+  async function onSubmit(e) {
     e.preventDefault();
     setError("");
     setIsSubmitting(true);
-    handleLogin();
-    setIsSubmitting(false);
+    try {
+      await handleLogin();
+      toast.success("Logged in successfully");
+    } catch (err) {
+      const message = err?.message || "Login failed";
+      setError(message);
+      toast.error(message);
+    } finally {
+      setIsSubmitting(false);
+    }
   }
 
   return (
