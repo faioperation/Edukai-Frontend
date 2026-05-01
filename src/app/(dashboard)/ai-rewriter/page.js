@@ -1,51 +1,246 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import toast from "react-hot-toast";
 import { Check, Download, Mail, PencilLine, X } from "lucide-react";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import PdfPreview from "@/components/PdfPreview";
+import { apiGet, apiPatch, apiPut } from "@/lib/api";
 
-const ORIGINAL_CV_URL =
-  "/assets/cv/MD. AL RAKEB RASEL BOSHUNIA.pdf";
+function na(v) {
+  if (v === null || v === undefined) return "";
+  const s = String(v).trim();
+  return s === "null" ? "" : s;
+}
 
-const dummyEnhanced = {
-  header: {
-    name: "MD. AL RAKEB RASEL BOSHUNIA",
-    designation: "Backend Engineer (Django)",
-    location: "Dhaka, Bangladesh",
-    phone: "++880 1749126396",
-    email: "official.alrakib@gmail.com",
-  },
-  sections: [
-    {
-      id: "profile",
-      title: "Professional Profile",
-      body:
-        "Backend Engineer specializing in Python and Django. Experienced in building scalable REST APIs, optimizing databases, and designing secure, maintainable services. Strong communication and stakeholder alignment with a focus on measurable impact.",
+function resolveRawPdfUrl({ rawPdfUrl, rawPdfPath }) {
+  const direct = na(rawPdfUrl);
+  if (direct) return direct;
+  const path = na(rawPdfPath);
+  if (!path) return "";
+
+  const base = process.env.NEXT_PUBLIC_API_BASE_URL || "";
+  if (!base) return path;
+  // Try to remove "/api" suffix if present so uploads resolve.
+  const normalizedBase = base.replace(/\/+$/, "").replace(/\/api$/i, "");
+  try {
+    return new URL(path, normalizedBase + "/").toString();
+  } catch {
+    return path;
+  }
+}
+
+function resolveGeneratedPdfUrl({ pdfUrl, pdfPath }) {
+  const direct = na(pdfUrl);
+  if (direct) return direct;
+  const path = na(pdfPath);
+  if (!path) return "";
+
+  const base = process.env.NEXT_PUBLIC_API_BASE_URL || "";
+  if (!base) return path;
+  const normalizedBase = base.replace(/\/+$/, "").replace(/\/api$/i, "");
+  try {
+    return new URL(path, normalizedBase + "/").toString();
+  } catch {
+    return path;
+  }
+}
+
+function toPdfProxyUrl(url) {
+  const u = na(url);
+  if (!u) return "";
+  // pdfjs requires CORS for cross-origin PDFs; proxy it through same-origin.
+  if (u.startsWith("/")) return u;
+  const params = new URLSearchParams({ url: u });
+  return `/api/pdf-proxy?${params.toString()}`;
+}
+
+function parseContactDetails(contactDetails) {
+  const raw = na(contactDetails);
+  if (!raw) return { email: "", phone: "", other: "" };
+  const parts = raw
+    .split("/")
+    .map((p) => p.trim())
+    .filter(Boolean);
+  const email = parts.find((p) => p.includes("@")) || "";
+  const phone = parts.find((p) => !p.includes("@")) || "";
+  const other = parts.filter((p) => p !== email && p !== phone).join(" / ");
+  return { email, phone, other };
+}
+
+function toBullets(list, pick) {
+  const items = Array.isArray(list) ? list : [];
+  const lines = items
+    .map((it) => pick(it))
+    .flat()
+    .map((x) => na(x))
+    .filter(Boolean);
+  if (!lines.length) return "N/A";
+  return lines.map((x) => `- ${x}`).join("\n");
+}
+
+function buildContactDetails({ email, phone, other }) {
+  const parts = [na(email), na(phone), na(other)].filter(Boolean);
+  return parts.join(" / ");
+}
+
+function parseJobsText(text) {
+  const raw = na(text);
+  if (!raw || raw === "N/A") return [];
+
+  const blocks = raw
+    .split(/\n\s*\n/g)
+    .map((b) => b.trim())
+    .filter(Boolean);
+
+  return blocks
+    .map((block) => {
+      const lines = block
+        .split("\n")
+        .map((l) => l.trim())
+        .filter(Boolean);
+      if (!lines.length) return null;
+
+      // Expected:
+      // Company (Period)
+      // Role
+      // - Resp...
+      const first = lines[0] || "";
+      const m = first.match(/^(.*?)(?:\s*\((.*)\))?$/);
+      const company = na(m?.[1]) || "N/A";
+      const period = na(m?.[2]);
+
+      let role = "";
+      const rest = lines.slice(1);
+      if (rest.length && !rest[0].startsWith("-")) {
+        role = na(rest[0]);
+        rest.shift();
+      }
+      const responsibilities = rest
+        .filter((l) => l.startsWith("-"))
+        .map((l) => na(l.replace(/^-+\s*/, "")))
+        .filter(Boolean);
+
+      return { company, period: period || undefined, role: role || undefined, responsibilities };
+    })
+    .filter(Boolean);
+}
+
+function parseEducationText(text) {
+  const raw = na(text);
+  if (!raw || raw === "N/A") return [];
+  return raw
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l.startsWith("-"))
+    .map((l) => na(l.replace(/^-+\s*/, "")))
+    .filter(Boolean)
+    .map((title) => ({ title }));
+}
+
+function jobsToText(jobs) {
+  const items = Array.isArray(jobs) ? jobs : [];
+  if (!items.length) return "N/A";
+
+  return items
+    .map((j) => {
+      const company = na(j?.company ?? j?.company_name) || "N/A";
+      const period = na(j?.period);
+      const role = na(j?.role);
+      const resps = Array.isArray(j?.responsibilities) ? j.responsibilities : [];
+
+      const lines = [];
+      lines.push(`${company}${period ? ` (${period})` : ""}`);
+      if (role) lines.push(role);
+
+      const respLines = resps.map((r) => na(r)).filter(Boolean).map((r) => `- ${r}`);
+      if (respLines.length) lines.push(...respLines);
+
+      return lines.join("\n");
+    })
+    .join("\n\n");
+}
+
+/** Flatten quality-check `cv` + nested `aiRaw` into the shape used by the rewriter UI. */
+function normalizeCvPayload(cv) {
+  if (!cv || typeof cv !== "object") return cv;
+
+  const hasJobs = Array.isArray(cv.jobs) && cv.jobs.length > 0;
+  const rawJobs = cv.aiRaw?.data?.employment_history?.jobs;
+  let jobs = hasJobs ? cv.jobs : [];
+  if (!jobs.length && Array.isArray(rawJobs)) {
+    jobs = rawJobs.map((j) => ({
+      role: na(j?.role),
+      company: na(j?.company_name ?? j?.company),
+      period: na(j?.period),
+      responsibilities: Array.isArray(j?.responsibilities) ? j.responsibilities : [],
+    }));
+  }
+
+  let educations = Array.isArray(cv.educations) ? cv.educations : [];
+  const eduItems = cv.aiRaw?.data?.education_qualifications?.items;
+  if (!educations.length && Array.isArray(eduItems)) {
+    educations = eduItems.map((t) => ({
+      title: typeof t === "string" ? t : na(t?.title ?? t),
+    }));
+  }
+
+  const header = cv.aiRaw?.data?.header;
+  const pp = cv.aiRaw?.data?.professional_profile;
+
+  return {
+    ...cv,
+    firstName: na(cv.firstName) || na(header?.first_name) || na(header?.name) || cv.firstName,
+    professionalTitle:
+      na(cv.professionalTitle) || na(header?.professional_title) || cv.professionalTitle,
+    location: na(cv.location) || na(header?.location) || cv.location,
+    contactDetails:
+      na(cv.contactDetails) || na(header?.contact_details) || cv.contactDetails,
+    profileTitle: na(cv.profileTitle) || na(pp?.title) || "Professional Profile",
+    profileContent: na(cv.profileContent) || na(pp?.content) || "N/A",
+    jobs,
+    educations,
+  };
+}
+
+function buildEnhancedFromGeneratedCv(data) {
+  const d = data || {};
+  const { email, phone, other } = parseContactDetails(d.contactDetails);
+
+  const name = [na(d.firstName), na(d.lastName)].filter(Boolean).join(" ") || "—";
+  const designation = na(d.professionalTitle) || "—";
+  const location = na(d.location) || "—";
+  const logo = na(d.logo);
+
+  const jobsText = jobsToText(d.jobs);
+
+  const eduText = toBullets(d.educations, (e) => na(e.title));
+  const profileTitle = na(d.profileTitle) || "Professional Profile";
+  const profileContent = na(d.profileContent) || "N/A";
+
+  return {
+    header: {
+      logo,
+      name,
+      designation,
+      location,
+      phone: phone || other || "",
+      email: email || "",
     },
-    {
-      id: "history",
-      title: "Employment History",
-      body:
-        "- Built and maintained Django-based services for internal automation.\n- Designed REST APIs and integrated third-party services.\n- Improved performance by optimizing PostgreSQL queries and caching.\n- Collaborated with cross-functional teams to deliver features.",
-    },
-    {
-      id: "education",
-      title: "Education & Qualifications",
-      body:
-        "- BSc in Computer Science\n- Training in REST API design & security best practices\n- Continuous learning in distributed systems",
-    },
-    {
-      id: "expertise",
-      title: "Technical Expertise",
-      body:
-        "Django, REST API, PostgreSQL, Docker, Python, Redis, Kubernetes",
-    },
-  ],
-};
+    sections: [
+      { id: "profile", title: profileTitle, body: profileContent },
+      { id: "history", title: "Employment History", body: jobsText },
+      { id: "education", title: "Education & Qualifications", body: eduText },
+      {
+        id: "expertise",
+        title: "Technical Expertise",
+        body: profileContent,
+      },
+    ],
+  };
+}
 
 function EditIconButton({ onClick, label = "Edit" }) {
   return (
@@ -218,12 +413,45 @@ function CvHoverEditSection({
 export default function AiRewriterPage() {
   const router = useRouter();
 
-  const candidateName = dummyEnhanced.header.name;
-  const [enhanced, setEnhanced] = useState(dummyEnhanced);
+  const [generated, setGenerated] = useState(null);
+  const [originalPdfUrl, setOriginalPdfUrl] = useState("");
+  const [enhanced, setEnhanced] = useState(() =>
+    buildEnhancedFromGeneratedCv(null)
+  );
   const [activeEditId, setActiveEditId] = useState(null);
   const [draftValue, setDraftValue] = useState("");
+  const [saving, setSaving] = useState(false);
 
-  const encodedOriginalUrl = useMemo(() => encodeURI(ORIGINAL_CV_URL), []);
+  useEffect(() => {
+    try {
+      const raw = sessionStorage.getItem("generatedCv:last");
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      const res = parsed?.response;
+      let cv =
+        res?.data?.cv ||
+        res?.data?.data ||
+        res?.data ||
+        res?.data?.item ||
+        null;
+      if (!cv || typeof cv !== "object") return;
+      cv = normalizeCvPayload(cv);
+      setGenerated(cv);
+      setEnhanced(buildEnhancedFromGeneratedCv(cv));
+      setOriginalPdfUrl(
+        resolveRawPdfUrl({ rawPdfUrl: cv.rawPdfUrl, rawPdfPath: cv.rawPdfPath })
+      );
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  const candidateName = enhanced?.header?.name || "—";
+  const encodedOriginalUrl = useMemo(() => {
+    const u = originalPdfUrl || "";
+    const proxied = toPdfProxyUrl(u);
+    return proxied || "";
+  }, [originalPdfUrl]);
 
   function updateHeader(key, value) {
     setEnhanced((prev) => ({
@@ -249,8 +477,46 @@ export default function AiRewriterPage() {
     setDraftValue("");
   }
 
-  function saveEdit(id, value) {
+  async function persistGeneratedCvPatch(patch) {
+    const cvId = generated?.id;
+    if (!cvId) throw new Error("Missing generated CV id");
+    let res;
+    try {
+      res = await apiPatch(`/generated-cv/${cvId}`, patch);
+    } catch (e) {
+      // Some backends only allow PUT for updates.
+      if (e?.status === 405 || e?.status === 404) {
+        res = await apiPut(`/generated-cv/${cvId}`, patch);
+      } else {
+        throw e;
+      }
+    }
+    if (res?.success === false) throw new Error(res?.message || "Update failed");
+
+    // Some backends return { success, message } without the updated entity.
+    let updated = res?.data ?? res;
+    const looksLikeCv =
+      updated &&
+      typeof updated === "object" &&
+      (updated?.id || updated?.profileContent != null || updated?.rawPdfUrl || updated?.aiRaw);
+
+    if (!looksLikeCv) {
+      const fresh = await apiGet(`/generated-cv/${cvId}`);
+      if (fresh?.success === false)
+        throw new Error(fresh?.message || "Failed to refresh generated CV");
+      updated = fresh?.data ?? fresh;
+    }
+
+    return normalizeCvPayload(updated);
+  }
+
+  async function saveEdit(id, value) {
     if (!id) return;
+
+    if (!generated?.id) {
+      toast.error("No generated CV loaded");
+      return;
+    }
 
     if (id.startsWith("header.")) {
       const key = id.replace("header.", "");
@@ -261,29 +527,106 @@ export default function AiRewriterPage() {
 
     setActiveEditId(null);
     setDraftValue("");
-    toast.success("Section updated");
+
+    // Persist to backend using /generated-cv/:cvId
+    const loadingId = toast.loading("Saving changes…");
+    setSaving(true);
+    try {
+      const patch = {};
+
+      // Header mappings
+      if (id === "header.name") patch.firstName = na(value) || generated.firstName;
+      if (id === "header.designation") patch.professionalTitle = na(value);
+      if (id === "header.location") patch.location = na(value);
+      if (id === "header.phone" || id === "header.email") {
+        const cur = parseContactDetails(generated?.contactDetails);
+        const next = {
+          ...cur,
+          email: id === "header.email" ? na(value) : cur.email,
+          phone: id === "header.phone" ? na(value) : cur.phone,
+        };
+        patch.contactDetails = buildContactDetails(next);
+      }
+
+      // Section mappings
+      if (id === "profile") patch.profileContent = na(value);
+      if (id === "history") patch.jobs = parseJobsText(value);
+      if (id === "education") patch.educations = parseEducationText(value);
+
+      // In our UI "Technical Expertise" is derived from profileContent, so keep it editable too.
+      if (id === "expertise") patch.profileContent = na(value);
+
+      const updatedCv = await persistGeneratedCvPatch(patch);
+      setGenerated(updatedCv);
+      setEnhanced(buildEnhancedFromGeneratedCv(updatedCv));
+      setOriginalPdfUrl(
+        resolveRawPdfUrl({ rawPdfUrl: updatedCv.rawPdfUrl, rawPdfPath: updatedCv.rawPdfPath })
+      );
+      try {
+        const stamp = { response: { success: true, data: updatedCv }, savedAt: Date.now() };
+        sessionStorage.setItem("generatedCv:last", JSON.stringify(stamp));
+      } catch {
+        // ignore
+      }
+      toast.success("Saved", { id: loadingId });
+    } catch (e) {
+      toast.error(e?.message || "Save failed", { id: loadingId });
+      // We already applied optimistic UI update; re-sync from last known generated state.
+      const cv = normalizeCvPayload(generated);
+      setEnhanced(buildEnhancedFromGeneratedCv(cv));
+    } finally {
+      setSaving(false);
+    }
   }
 
-  function downloadProcessed() {
-    const lines = [
-      enhanced.header.name,
-      enhanced.header.designation,
-      enhanced.header.location,
-      enhanced.header.phone,
-      enhanced.header.email,
-      "",
-      ...enhanced.sections.flatMap((s) => ["## " + s.title, s.body, ""]),
-    ];
-    const blob = new Blob([lines.join("\n")], { type: "text/plain;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `${enhanced.header.name} - AI Enhanced.txt`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
-    toast.success("Downloaded processed CV");
+  async function downloadProcessed() {
+    const cvId = generated?.id;
+    if (!cvId) {
+      toast.error("No generated CV loaded");
+      return;
+    }
+
+    const loadingId = toast.loading("Generating PDF…");
+    try {
+      const res = await apiPatch(`/generated-cv/generate-pdf/${cvId}`, {});
+      if (res?.success === false)
+        throw new Error(res?.message || "Failed to generate PDF");
+
+      const payload = res?.data ?? res;
+      const updated = payload?.data ?? payload;
+
+      const nextCv = normalizeCvPayload({
+        ...(generated || {}),
+        ...(updated || {}),
+      });
+      setGenerated(nextCv);
+
+      const directUrl = resolveGeneratedPdfUrl({
+        pdfUrl: nextCv.pdfUrl,
+        pdfPath: nextCv.pdfPath,
+      });
+      if (!directUrl) throw new Error("PDF URL not returned");
+
+      // Download via same-origin proxy to avoid CORS issues.
+      const downloadUrl = toPdfProxyUrl(directUrl);
+      const fileRes = await fetch(downloadUrl, { cache: "no-store" });
+      if (!fileRes.ok) throw new Error(`Download failed (${fileRes.status})`);
+      const blob = await fileRes.blob();
+
+      const objectUrl = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = objectUrl;
+      const safeName = (enhanced?.header?.name || "CV").replace(/[\\/:*?"<>|]+/g, "-");
+      a.download = `${safeName}-AI.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(objectUrl);
+
+      toast.success("PDF downloaded", { id: loadingId });
+    } catch (e) {
+      toast.error(e?.message || "PDF generation failed", { id: loadingId });
+    }
   }
 
   function proceedToMail() {
@@ -328,10 +671,18 @@ export default function AiRewriterPage() {
             <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-950">
               <div className="no-scrollbar h-[640px] overflow-y-auto bg-slate-100 p-4 dark:bg-slate-900">
                 <div className="mx-auto w-full max-w-[680px]">
-                  <PdfPreview url={encodedOriginalUrl} />
+                  {encodedOriginalUrl ? (
+                    <PdfPreview url={encodedOriginalUrl} />
+                  ) : (
+                    <div className="rounded-xl border border-slate-200 bg-white p-4 text-sm text-slate-700 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-200">
+                      No raw PDF URL found for this generated CV.
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
+
+           
           </CardContent>
         </Card>
 
@@ -364,6 +715,20 @@ export default function AiRewriterPage() {
                   </div>
 
                   <div className="mt-4 text-center">
+                    {enhanced?.header?.logo ? (
+                      <div className="mb-3 flex justify-center">
+                        <img
+                          src={enhanced.header.logo}
+                          alt="Logo"
+                          className="h-10 w-auto object-contain"
+                          referrerPolicy="no-referrer"
+                          onError={(e) => {
+                            // hide broken image
+                            e.currentTarget.style.display = "none";
+                          }}
+                        />
+                      </div>
+                    ) : null}
                     <CvHoverEditText
                       id="header.name"
                       value={enhanced.header.name}

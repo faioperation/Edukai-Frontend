@@ -1,7 +1,8 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import toast from "react-hot-toast";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Download,
   Pencil,
@@ -19,6 +20,10 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 
+import { apiGet, apiPost } from "@/lib/api";
+
+const DEFAULT_LIMIT = 200;
+
 const PHASES = [
   "not_applicable",
   "nursery",
@@ -29,6 +34,57 @@ const PHASES = [
 ];
 
 const GENDERS = ["boys", "girls", "mixed"];
+
+function normalizePhase(v) {
+  const s = String(v || "").trim().toLowerCase();
+  if (!s) return "";
+  return s.replace(/\s+/g, "_");
+}
+
+function normalizeGender(v) {
+  const s = String(v || "").trim().toLowerCase();
+  if (!s) return "";
+  if (s === "male" || s === "m") return "boys";
+  if (s === "female" || s === "f") return "girls";
+  return s;
+}
+
+function mapImportOrgToRow(item) {
+  const d = item || {};
+  return {
+    id: d.id,
+    urn: d.URN ?? d.urn ?? "",
+    name: d.OrganizationName ?? d.name ?? "",
+    localAuthority: d.LocalAuthority ?? d.localAuthority ?? "",
+    phase: normalizePhase(d.Phase ?? d.phase),
+    gender: normalizeGender(d.Gender ?? d.gender),
+    telephone: String(d.TelephoneNumber ?? d.telephone ?? ""),
+    street: d.Street ?? d.street ?? "",
+    postcode: d.Postcode ?? d.postcode ?? "",
+    addressLine1: d.AddressLine1 ?? d.addressLine1 ?? "",
+    addressLine2: d.AddressLine2 ?? d.addressLine2 ?? "",
+    town: d.Town ?? d.town ?? "",
+    county: d.county ?? "",
+    region: d.region ?? "",
+    district: d.district ?? "",
+    country: d.country ?? "",
+    contactCount: d.contactCount ?? 0,
+    isManual: !!d.isManual,
+    createdAt: d.createdAt ?? null,
+  };
+}
+
+function isExcelFile(file) {
+  const name = String(file?.name || "").toLowerCase();
+  const okExt = name.endsWith(".xlsx") || name.endsWith(".xls");
+  const mime = String(file?.type || "").toLowerCase();
+  const okMime =
+    !mime ||
+    mime.includes("spreadsheet") ||
+    mime.includes("excel") ||
+    mime.includes("officedocument");
+  return okExt && okMime;
+}
 
 const seed = [
   {
@@ -119,20 +175,66 @@ function pillClasses() {
 
 export default function OrganizationsPage() {
   const fileInputRef = useRef(null);
+  const queryClient = useQueryClient();
 
-  const [rows, setRows] = useState(seed);
   const [q, setQ] = useState("");
   const [phase, setPhase] = useState("all");
-  const [town, setTown] = useState("all");
+  const [region, setRegion] = useState("all");
   const [gender, setGender] = useState("all");
   const [localAuthority, setLocalAuthority] = useState("all");
+  const [page, setPage] = useState(1);
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [dialogMode, setDialogMode] = useState("add"); // add | edit
   const [draft, setDraft] = useState(null);
 
+  const importOrgsQuery = useQuery({
+    queryKey: ["import-organization", "all", { q, phase, region, gender, localAuthority, page }],
+    queryFn: async () => {
+      const params = {
+        searchTerm: q?.trim() ? q.trim() : undefined,
+        region: region === "all" ? undefined : region,
+        gender: gender === "all" ? undefined : optionLabel(gender),
+        phase: phase === "all" ? undefined : optionLabel(phase),
+        localAuthority: localAuthority === "all" ? undefined : localAuthority,
+        limit: DEFAULT_LIMIT,
+        page,
+      };
+      const res = await apiGet("/import-organization/all", { params });
+      if (res?.success === false)
+        throw new Error(res?.message || "Failed to load imported organizations");
+      const raw = res?.data ?? res;
+      const items = Array.isArray(raw?.data) ? raw.data : [];
+      const meta = raw?.meta || {};
+      return {
+        items: items.map(mapImportOrgToRow),
+        meta: {
+          page: Number(meta.page || page || 1),
+          limit: Number(meta.limit || DEFAULT_LIMIT),
+          total: Number(meta.total || items.length || 0),
+          totalPage: Number(meta.totalPage || 1),
+        },
+      };
+    },
+    staleTime: 10_000,
+    keepPreviousData: true,
+  });
+
+  const rows = importOrgsQuery.data?.items || [];
+  const meta = importOrgsQuery.data?.meta || {
+    page,
+    limit: DEFAULT_LIMIT,
+    total: rows.length,
+    totalPage: 1,
+  };
+
   const towns = useMemo(() => {
     const set = new Set(rows.map((r) => r.town).filter(Boolean));
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+  }, [rows]);
+
+  const regions = useMemo(() => {
+    const set = new Set(rows.map((r) => r.region).filter(Boolean));
     return Array.from(set).sort((a, b) => a.localeCompare(b));
   }, [rows]);
 
@@ -150,12 +252,16 @@ export default function OrganizationsPage() {
           .some((x) => String(x).toLowerCase().includes(query))
         : true;
       const phaseOk = phase === "all" ? true : r.phase === phase;
-      const townOk = town === "all" ? true : r.town === town;
+      const regionOk = region === "all" ? true : r.region === region;
       const genderOk = gender === "all" ? true : r.gender === gender;
       const laOk = localAuthority === "all" ? true : r.localAuthority === localAuthority;
-      return qOk && phaseOk && townOk && genderOk && laOk;
+      return qOk && phaseOk && regionOk && genderOk && laOk;
     });
-  }, [gender, localAuthority, phase, q, rows, town]);
+  }, [gender, localAuthority, phase, q, region, rows]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [q, phase, region, gender, localAuthority]);
 
   function openAdd() {
     setDialogMode("add");
@@ -235,8 +341,29 @@ export default function OrganizationsPage() {
   function onImportFile(e) {
     const file = e.target.files?.[0];
     if (!file) return;
-    toast.success(`Selected: ${file.name}`);
-    e.target.value = "";
+    if (!isExcelFile(file)) {
+      toast.error("Please upload a valid Excel file (.xlsx or .xls)");
+      e.target.value = "";
+      return;
+    }
+
+    const loadingId = toast.loading("Importing Excel…");
+    (async () => {
+      try {
+        const fd = new FormData();
+        fd.append("files", file);
+        const res = await apiPost("/import-organization/upload", fd);
+        if (res?.success === false) throw new Error(res?.message || "Import failed");
+
+        toast.success(res?.message || "Imported successfully", { id: loadingId });
+        setPage(1);
+        queryClient.invalidateQueries({ queryKey: ["import-organization", "all"] });
+      } catch (err) {
+        toast.error(err?.message || "Import failed", { id: loadingId });
+      } finally {
+        e.target.value = "";
+      }
+    })();
   }
 
   return (
@@ -257,7 +384,7 @@ export default function OrganizationsPage() {
               Total organizations :
             </span>
             <span className="ml-2 mt-1 text-base font-semibold text-primary dark:text-primary">
-              {rows.length}
+              {meta.total ?? rows.length}
             </span>
           </div>
 
@@ -321,14 +448,14 @@ export default function OrganizationsPage() {
           </select>
 
           <select
-            value={town}
-            onChange={(e) => setTown(e.target.value)}
+            value={region}
+            onChange={(e) => setRegion(e.target.value)}
             className="h-12 w-full cursor-pointer rounded-xl border border-slate-200 bg-white px-4 pr-10 text-base text-slate-900 outline-none focus:ring-2 focus:ring-primary/30 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:focus:ring-primary/40"
           >
-            <option value="all">All Towns</option>
-            {towns.map((t) => (
-              <option key={t} value={t}>
-                {t}
+            <option value="all">All Regions</option>
+            {regions.map((r) => (
+              <option key={r} value={r}>
+                {r}
               </option>
             ))}
           </select>
@@ -375,6 +502,25 @@ export default function OrganizationsPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
+              {importOrgsQuery.isLoading ? (
+                <tr>
+                  <td
+                    colSpan={5}
+                    className="px-5 py-10 text-center text-sm text-slate-600 dark:text-slate-400"
+                  >
+                    Loading organizations…
+                  </td>
+                </tr>
+              ) : importOrgsQuery.isError ? (
+                <tr>
+                  <td
+                    colSpan={5}
+                    className="px-5 py-10 text-center text-sm text-rose-700 dark:text-rose-300"
+                  >
+                    {importOrgsQuery.error?.message || "Failed to load organizations"}
+                  </td>
+                </tr>
+              ) : null}
               {filtered.map((row) => (
                 <tr key={row.id} className="hover:bg-slate-100/70 dark:hover:bg-slate-900/40">
                   <td className="px-5 py-4">
@@ -447,6 +593,37 @@ export default function OrganizationsPage() {
               ) : null}
             </tbody>
           </table>
+        </div>
+      </div>
+
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div className="text-sm text-slate-600 dark:text-slate-400">
+          Page{" "}
+          <span className="font-semibold text-slate-900 dark:text-slate-100">
+            {meta.page}
+          </span>{" "}
+          of{" "}
+          <span className="font-semibold text-slate-900 dark:text-slate-100">
+            {meta.totalPage}
+          </span>
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            disabled={meta.page <= 1 || importOrgsQuery.isFetching}
+            onClick={() => setPage((p) => Math.max(1, p - 1))}
+            className="inline-flex h-10 items-center justify-center rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-800 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-55 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:hover:bg-slate-900"
+          >
+            Prev
+          </button>
+          <button
+            type="button"
+            disabled={meta.page >= meta.totalPage || importOrgsQuery.isFetching}
+            onClick={() => setPage((p) => Math.min(meta.totalPage || 1, p + 1))}
+            className="inline-flex h-10 items-center justify-center rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-800 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-55 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:hover:bg-slate-900"
+          >
+            Next
+          </button>
         </div>
       </div>
 
