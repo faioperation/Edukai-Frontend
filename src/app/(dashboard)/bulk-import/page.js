@@ -64,6 +64,8 @@ export default function BulkImportPage() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [stepIndex, setStepIndex] = useState(0);
   const [result, setResult] = useState(null);
+  const [processedCount, setProcessedCount] = useState(0);
+  const [progressPct, setProgressPct] = useState(0);
 
   const totalSelected = files.length;
 
@@ -143,11 +145,15 @@ export default function BulkImportPage() {
     setDialogOpen(true);
     setStepIndex(0);
     setResult(null);
+    setProcessedCount(0);
+    setProgressPct(0);
     bulkImportMutation.mutate(undefined, {
       onSuccess: (res) => {
         const total = res?.totalUploadCount ?? files.length;
         const passed = res?.totalQualityPassCount ?? 0;
         const failed = res?.totalQualityFailedCount ?? 0;
+        setProcessedCount(total);
+        setProgressPct(100);
         setResult({
           total,
           passed,
@@ -169,18 +175,40 @@ export default function BulkImportPage() {
     if (result) return;
     if (!bulkImportMutation.isPending) return;
 
+    // Progress should only move forward.
     const t1 = setTimeout(() => setStepIndex(1), 1200);
     const t2 = setTimeout(() => setStepIndex(2), 2600);
-    const tick = setInterval(() => {
-      setStepIndex((s) => (s + 1) % PROCESS_STEPS.length);
-    }, 2500);
+
+    // Simulated progress count (backend doesn't stream progress).
+    const total = files.length;
+    const countTick = setInterval(() => {
+      setProcessedCount((c) => {
+        if (!total) return 0;
+        if (c >= total) return total;
+        // speed up a bit, then slow down near the end
+        const remaining = total - c;
+        const inc = remaining <= 3 ? 0 : remaining <= 8 ? 1 : 2;
+        return Math.min(total, c + Math.max(1, inc));
+      });
+    }, 900);
+
+    const pctTick = setInterval(() => {
+      setProgressPct((prev) => {
+        const t = total || 1;
+        const ratio = Math.min(1, processedCount / t);
+        // cap at 90% until we get the final response
+        const computed = Math.floor(10 + ratio * 80); // 10..90
+        return Math.max(prev, Math.min(90, computed));
+      });
+    }, 350);
 
     return () => {
       clearTimeout(t1);
       clearTimeout(t2);
-      clearInterval(tick);
+      clearInterval(countTick);
+      clearInterval(pctTick);
     };
-  }, [bulkImportMutation.isPending, dialogOpen, result]);
+  }, [bulkImportMutation.isPending, dialogOpen, files.length, processedCount, result]);
 
   function onOk() {
     setDialogOpen(false);
@@ -387,11 +415,17 @@ export default function BulkImportPage() {
                       <div className="mt-1 text-base text-black/60 dark:text-slate-400">
                         Checking {formatCount(files.length)} CV
                         {files.length > 1 ? "s" : ""} with your rules
+                        <span className="mx-2">•</span>
+                        Processed{" "}
+                        <span className="font-semibold text-black dark:text-slate-100">
+                          {formatCount(Math.min(processedCount, files.length))}
+                        </span>
+                        /{formatCount(files.length)}
                       </div>
                     </div>
                   </div>
                   <div className="text-lg font-semibold text-primary">
-                    {stepIndex === 0 ? "35%" : stepIndex === 1 ? "70%" : "90%"}
+                    {Math.min(100, Math.max(0, progressPct || 0))}%
                   </div>
                 </div>
 
@@ -399,8 +433,7 @@ export default function BulkImportPage() {
                   <div
                     className="h-full rounded-full bg-primary transition-all duration-700"
                     style={{
-                      width:
-                        stepIndex === 0 ? "35%" : stepIndex === 1 ? "70%" : "90%",
+                      width: `${Math.min(100, Math.max(0, progressPct || 0))}%`,
                     }}
                   />
                 </div>
@@ -492,6 +525,7 @@ export default function BulkImportPage() {
                   bulkImportMutation.reset();
                   setDialogOpen(false);
                 }}
+                disabled={bulkImportMutation.isPending}
                 className="inline-flex cursor-pointer items-center justify-center rounded-md border border-slate-200 bg-white px-5 py-2.5 text-base font-medium text-slate-700 transition-colors hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-200 dark:hover:bg-slate-900"
               >
                 Cancel

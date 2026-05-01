@@ -11,7 +11,9 @@ import {
   MapPin,
   Pencil,
   Phone,
+  RefreshCw,
   Search,
+  Sparkles,
   Trash2,
   UserRound,
   Wand2,
@@ -25,13 +27,17 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 
-import { apiDelete, apiGet, apiPatch } from "@/lib/api";
+import { apiDelete, apiGet, apiPatch, apiPost } from "@/lib/api";
 
 const TABS = [
   { key: "all", label: "All CVs" },
   { key: "passed", label: "Quality Passed" },
   { key: "failed", label: "Quality Failed" },
 ];
+
+function generatedCvStorageKey(qualityCheckId) {
+  return `generatedCv:qc:${qualityCheckId}`;
+}
 
 function mapAvailability(status) {
   if (typeof status === "boolean") return status ? "Available" : "Not available";
@@ -55,11 +61,22 @@ function mapQualityStatus(status) {
 function mapQualityCheckToRow(item) {
   const c = item?.candidate || {};
   const extracted = c?.extractedJson || {};
-  const skills = Array.isArray(extracted?.top_skills) ? extracted.top_skills : [];
+  const skills =
+    (Array.isArray(c?.skills) && c.skills) ||
+    (Array.isArray(c?.top_skills) && c.top_skills) ||
+    (Array.isArray(item?.skills) && item.skills) ||
+    (Array.isArray(extracted?.top_skills) && extracted.top_skills) ||
+    [];
   const derivedStatus =
     c?.qualityStatus !== undefined && c?.qualityStatus !== null
       ? c.qualityStatus
       : item?.qualityPass;
+
+  const aiGenerated =
+    item?.aiGenerated === true ||
+    item?.aiGenerated === "true" ||
+    c?.aiGenerated === true ||
+    c?.aiGenerated === "true";
 
   return {
     id: item?.id || c?.id,
@@ -78,10 +95,31 @@ function mapQualityCheckToRow(item) {
     pdfUrl: c?.rawPdfUrl || null,
     rawPdfPath: c?.rawPdfPath || null,
     aiCheck: !!c?.aiCheck,
+    aiGenerated,
     fullResponse: item?.fullResponse || null,
     createdAt: item?.createdAt || c?.createdAt || null,
     candidate: c,
   };
+}
+
+function mergeSkills({ prevSkills, nextSkills, mappedSkills, preferNext = false }) {
+  const norm = (arr) =>
+    (Array.isArray(arr) ? arr : [])
+      .map((s) => String(s || "").trim())
+      .filter(Boolean);
+
+  const prev = norm(prevSkills);
+  const next = norm(nextSkills);
+  const mapped = norm(mappedSkills);
+
+  // When user edits skills in the dialog, the backend response often still contains
+  // the old extractedJson.top_skills. In that case, keep the user's edited value.
+  if (preferNext && next.length) return next;
+
+  // Otherwise prefer backend value when it exists; fall back to what we had.
+  if (mapped.length) return mapped;
+  if (next.length) return next;
+  return prev;
 }
 
 const seed = [
@@ -289,6 +327,7 @@ export default function CvQueuePage() {
   const [editMode, setEditMode] = useState(false);
   const [selectedId, setSelectedId] = useState(null);
   const [draft, setDraft] = useState(null);
+  const [generatingIds, setGeneratingIds] = useState({});
 
   const qualityChecksQuery = useQuery({
     queryKey: ["quality-checks", "all"],
@@ -384,9 +423,86 @@ export default function CvQueuePage() {
     return { all, passed, failed };
   }, [rows]);
 
-  function generateCv(name) {
-    toast.success(`Opening AI Re-writer for ${name}...`);
-    router.push("/ai-rewriter");
+  async function generateCv(row, options = {}) {
+    const { navigateToRewriter = true, isRegenerate = false } = options;
+    const id = row?.id;
+    const name = row?.name || "candidate";
+    if (!id) {
+      toast.error("Missing quality check id");
+      return;
+    }
+
+    setGeneratingIds((prev) => ({ ...prev, [id]: true }));
+    const loadingId = toast.loading(
+      isRegenerate ? `Regenerating CV for ${name}…` : `Generating CV for ${name}…`
+    );
+    try {
+      const res = await apiPost("/generated-cv/create", { qualityCheckId: id });
+      try {
+        const stamp = { response: res, savedAt: Date.now() };
+        sessionStorage.setItem(generatedCvStorageKey(id), JSON.stringify(stamp));
+        sessionStorage.setItem("generatedCv:last", JSON.stringify(stamp));
+      } catch {
+        // ignore storage errors
+      }
+
+      queryClient.invalidateQueries({ queryKey: ["quality-checks", "all"] });
+
+      toast.success(isRegenerate ? "CV regenerated" : "CV generated", { id: loadingId });
+      if (navigateToRewriter) router.push("/ai-rewriter");
+      return res?.data ?? res;
+    } catch (e) {
+      toast.error(e?.message || "Failed to generate CV", { id: loadingId });
+    } finally {
+      setGeneratingIds((prev) => {
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      });
+    }
+  }
+
+  function extractCvFromQualityCheckResponse(res) {
+    const payload = res?.data ?? res;
+    const qc = payload?.data ?? payload;
+    if (qc?.cv && typeof qc.cv === "object") return qc.cv;
+    if (
+      qc &&
+      (qc.profileContent != null ||
+        qc.rawPdfUrl ||
+        qc.rawPdfPath ||
+        qc.firstName != null ||
+        qc.aiRaw)
+    ) {
+      return qc;
+    }
+    return null;
+  }
+
+  async function viewAiGeneratedCv(row) {
+    const id = row?.id;
+    const name = row?.name || "candidate";
+    if (!id) return;
+
+    const key = generatedCvStorageKey(id);
+    const loadingId = toast.loading(`Opening AI CV for ${name}…`);
+    try {
+      const res = await apiGet(`/quality-checks/${id}`);
+      if (res?.success === false) throw new Error(res?.message || "Failed to load quality check");
+
+      const cv = extractCvFromQualityCheckResponse(res);
+      if (!cv) throw new Error("No AI-generated CV found on this quality check.");
+
+      const wrapped = { success: true, data: cv };
+      const stamp = { response: wrapped, savedAt: Date.now() };
+      sessionStorage.setItem(key, JSON.stringify(stamp));
+      sessionStorage.setItem("generatedCv:last", JSON.stringify(stamp));
+
+      toast.success("Loaded AI CV", { id: loadingId });
+      router.push("/ai-rewriter");
+    } catch (e) {
+      toast.error(e?.message || "Could not load AI CV.", { id: loadingId });
+    }
   }
 
   function openProfile(row) {
@@ -446,6 +562,12 @@ export default function CvQueuePage() {
           // If backend returns full updated entity, sync from it. Otherwise keep optimistic row.
           if (updated && (updated?.candidate || updated?.id)) {
             const mapped = mapQualityCheckToRow(updated);
+            mapped.skills = mergeSkills({
+              prevSkills: prevRow?.skills,
+              nextSkills: nextRow?.skills,
+              mappedSkills: mapped?.skills,
+              preferNext: true,
+            });
             setRows((prev) => prev.map((r) => (r.id === draft.id ? mapped : r)));
             setDraft(mapped);
           }
@@ -480,6 +602,11 @@ export default function CvQueuePage() {
           // If backend returns the full entity, keep UI 100% synced.
           if (updated && (updated?.candidate || updated?.id)) {
             const mapped = mapQualityCheckToRow(updated);
+            mapped.skills = mergeSkills({
+              prevSkills: prevRow?.skills,
+              nextSkills: nextRow?.skills,
+              mappedSkills: mapped?.skills,
+            });
             setRows((prev) => prev.map((r) => (r.id === id ? mapped : r)));
             if (draft?.id === id) setDraft(mapped);
           }
@@ -713,22 +840,43 @@ export default function CvQueuePage() {
                     </select>
                   </td>
                   <td className="px-5 py-4">
-                    <div className="flex items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={() => generateCv(row.name)}
-                        className="inline-flex cursor-pointer items-center gap-2 rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground transition-transform hover:scale-[1.02] hover:opacity-95 dark:bg-primary"
-                      >
-                        <FileText size={16} />
-                        Generate CV
-                      </button>
+                    <div className="flex w-full min-w-[200px] max-w-md flex-nowrap items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        {row?.aiGenerated ? (
+                          <button
+                            type="button"
+                            disabled={!!generatingIds[row.id]}
+                            onClick={() => generateCv(row, { isRegenerate: true })}
+                            className="inline-flex min-w-0 cursor-pointer items-center gap-2 rounded-xl border border-amber-200 bg-gradient-to-b from-amber-50 to-white px-3 py-2 text-xs font-semibold text-amber-950 shadow-sm transition hover:border-amber-300 hover:from-amber-100 hover:to-amber-50 disabled:cursor-not-allowed disabled:opacity-55 dark:border-amber-900/45 dark:from-amber-950/35 dark:to-slate-950 dark:text-amber-100 dark:hover:border-amber-800"
+                          >
+                            <RefreshCw
+                              size={15}
+                              className={[
+                                "shrink-0 text-amber-700 dark:text-amber-300",
+                                generatingIds[row.id] ? "animate-spin" : "",
+                              ].join(" ")}
+                            />
+                            Regenerate
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            disabled={!!generatingIds[row.id]}
+                            onClick={() => generateCv(row)}
+                            className="inline-flex min-w-0 cursor-pointer items-center gap-2 rounded-xl bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground shadow-sm transition hover:opacity-95 disabled:cursor-not-allowed disabled:opacity-55 dark:bg-primary"
+                          >
+                            <Wand2 size={15} className="shrink-0" />
+                            Generate CV
+                          </button>
+                        )}
+                      </div>
                       <button
                         type="button"
                         onClick={() => openProfile(row)}
-                        className="inline-flex cursor-pointer items-center justify-center rounded-xl border border-slate-200 bg-white p-2.5 text-slate-700 transition-colors hover:bg-primary hover:text-primary-foreground dark:border-slate-800 dark:bg-slate-950 dark:text-slate-200 dark:hover:bg-primary dark:hover:text-primary-foreground"
+                        className="inline-flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-700 transition-colors hover:bg-primary hover:text-primary-foreground dark:border-slate-800 dark:bg-slate-950 dark:text-slate-200 dark:hover:bg-primary dark:hover:text-primary-foreground"
                         aria-label={`View ${row.name}`}
                       >
-                        <Eye size={18} />
+                        <Eye size={17} />
                       </button>
                     </div>
                   </td>
@@ -756,33 +904,23 @@ export default function CvQueuePage() {
             key={row.id}
             className="rounded-2xl border border-slate-200 bg-white p-4 transition-colors hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-950 dark:hover:bg-slate-900/40"
           >
-            <div className="flex items-start justify-between gap-3">
-              <div className="flex min-w-0 items-center gap-3">
-                <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-primary/10 text-primary dark:bg-primary/15 dark:text-primary">
-                  <FileText size={20} />
+            <div className="flex items-start gap-3">
+              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-primary/10 text-primary dark:bg-primary/15 dark:text-primary">
+                <FileText size={20} />
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-lg font-semibold text-black dark:text-slate-100">
+                  {row.name}
                 </div>
-                <div className="min-w-0">
-                  <div className="truncate text-lg font-semibold text-black dark:text-slate-100">
-                    {row.name}
-                  </div>
-                  <div
-                    className={[
-                      "mt-1 inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-medium",
-                      statusPillClasses(row.status),
-                    ].join(" ")}
-                  >
-                    {statusLabel(row.status)}
-                  </div>
+                <div
+                  className={[
+                    "mt-1 inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-medium",
+                    statusPillClasses(row.status),
+                  ].join(" ")}
+                >
+                  {statusLabel(row.status)}
                 </div>
               </div>
-              <button
-                type="button"
-                onClick={() => openProfile(row)}
-                className="inline-flex cursor-pointer items-center justify-center rounded-xl border border-slate-200 bg-white p-2.5 text-slate-700 transition-colors hover:bg-primary hover:text-primary-foreground dark:border-slate-800 dark:bg-slate-950 dark:text-slate-200 dark:hover:bg-primary dark:hover:text-primary-foreground"
-                aria-label={`View ${row.name}`}
-              >
-                <Eye size={18} />
-              </button>
             </div>
 
             <div className="mt-4 grid gap-3 text-base">
@@ -850,14 +988,38 @@ export default function CvQueuePage() {
               </div>
             </div>
 
-            <div className="mt-4">
+            <div className="mt-4 flex items-stretch gap-2">
+              {row?.aiGenerated ? (
+                <button
+                  type="button"
+                  disabled={!!generatingIds[row.id]}
+                  onClick={() => generateCv(row, { isRegenerate: true })}
+                  className="inline-flex min-w-0 flex-1 cursor-pointer items-center justify-center gap-2 rounded-xl border border-amber-200 bg-gradient-to-r from-amber-50 to-white px-3 py-3 text-sm font-semibold text-amber-950 shadow-sm transition hover:border-amber-300 disabled:cursor-not-allowed disabled:opacity-55 dark:border-amber-900/45 dark:from-amber-950/35 dark:to-slate-950 dark:text-amber-100 sm:text-base"
+                >
+                  <RefreshCw
+                    size={18}
+                    className={generatingIds[row.id] ? "animate-spin" : ""}
+                  />
+                  Regenerate
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  disabled={!!generatingIds[row.id]}
+                  onClick={() => generateCv(row)}
+                  className="inline-flex min-w-0 flex-1 cursor-pointer items-center justify-center gap-2 rounded-xl bg-primary px-3 py-3 text-sm font-semibold text-primary-foreground shadow-sm transition hover:opacity-95 disabled:cursor-not-allowed disabled:opacity-55 dark:bg-primary sm:text-base"
+                >
+                  <Wand2 size={18} />
+                  Generate CV
+                </button>
+              )}
               <button
                 type="button"
-                onClick={() => generateCv(row.name)}
-                className="inline-flex w-full cursor-pointer items-center justify-center gap-2 rounded-xl bg-primary px-4 py-3 text-base font-semibold text-primary-foreground transition-transform hover:scale-[1.02] hover:opacity-95 dark:bg-primary"
+                onClick={() => openProfile(row)}
+                className="inline-flex h-12 w-12 shrink-0 cursor-pointer items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-700 transition-colors hover:bg-primary hover:text-primary-foreground dark:border-slate-800 dark:bg-slate-950 dark:text-slate-200 dark:hover:bg-primary dark:hover:text-primary-foreground"
+                aria-label={`View ${row.name}`}
               >
-                <FileText size={18} />
-                Generate CV
+                <Eye size={18} />
               </button>
             </div>
           </div>
@@ -1131,46 +1293,77 @@ export default function CvQueuePage() {
           )}
 
           <DialogFooter className="flex flex-wrap justify-end gap-2 sm:gap-3">
-            <button
-              type="button"
-              onClick={() => generateCv(form?.name || "")}
-              className="inline-flex cursor-pointer items-center justify-center gap-2 rounded-xl bg-primary px-5 py-3 text-base font-semibold text-primary-foreground transition-transform hover:scale-[1.02] hover:opacity-95 dark:bg-primary"
-            >
-              <Wand2 size={18} />
-              Generate CV
-            </button>
-            <button
-              type="button"
-              onClick={() => viewCv(form)}
-              className="inline-flex cursor-pointer items-center justify-center gap-2 rounded-xl border border-sky-200 bg-sky-50 px-5 py-3 text-base font-semibold text-sky-900 transition-colors hover:bg-sky-100 dark:border-sky-900/40 dark:bg-sky-950/25 dark:text-sky-200 dark:hover:bg-sky-950/40"
-            >
-              <FileText size={18} />
-              View CV
-            </button>
-            <button
-              type="button"
-              onClick={() => setEditMode((s) => !s)}
-              className="inline-flex cursor-pointer items-center justify-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-5 py-3 text-base font-semibold text-amber-900 transition-colors hover:bg-amber-100 dark:border-amber-900/40 dark:bg-amber-950/25 dark:text-amber-200 dark:hover:bg-amber-950/40"
-            >
-              <Pencil size={18} />
-              {editMode ? "Cancel Edit" : "Edit"}
-            </button>
-            <button
-              type="button"
-              onClick={onDelete}
-              className="inline-flex cursor-pointer items-center justify-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-5 py-3 text-base font-semibold text-rose-800 transition-colors hover:bg-rose-100 dark:border-rose-900/40 dark:bg-rose-950/25 dark:text-rose-200 dark:hover:bg-rose-950/40"
-            >
-              <Trash2 size={18} />
-              Delete
-            </button>
-            {editMode ? (
-              <button
-                type="button"
-                onClick={onSave}
-                className="inline-flex cursor-pointer items-center justify-center rounded-xl bg-emerald-600 px-6 py-3 text-base font-semibold text-white transition-colors hover:bg-emerald-700 dark:bg-emerald-600 dark:hover:bg-emerald-700"
-              >
-                Save changes
-              </button>
+            {form ? (
+              <>
+                {form.aiGenerated ? (
+                  <>
+                    <button
+                      type="button"
+                      disabled={!!generatingIds[form.id]}
+                      onClick={() => viewAiGeneratedCv(form)}
+                      className="inline-flex cursor-pointer items-center justify-center gap-2 rounded-xl border border-violet-200 bg-gradient-to-b from-violet-50 to-white px-5 py-3 text-base font-semibold text-violet-900 shadow-sm transition hover:border-violet-300 disabled:cursor-not-allowed disabled:opacity-55 dark:border-violet-900/50 dark:from-violet-950/45 dark:to-slate-950 dark:text-violet-100"
+                    >
+                      <Sparkles size={18} />
+                      View AI Generated CV
+                    </button>
+                    <button
+                      type="button"
+                      disabled={!!generatingIds[form.id]}
+                      onClick={() => generateCv(form, { isRegenerate: true })}
+                      className="inline-flex cursor-pointer items-center justify-center gap-2 rounded-xl border border-amber-200 bg-gradient-to-b from-amber-50 to-white px-5 py-3 text-base font-semibold text-amber-950 shadow-sm transition hover:border-amber-300 disabled:cursor-not-allowed disabled:opacity-55 dark:border-amber-900/45 dark:from-amber-950/35 dark:to-slate-950 dark:text-amber-100"
+                    >
+                      <RefreshCw
+                        size={18}
+                        className={generatingIds[form.id] ? "animate-spin" : ""}
+                      />
+                      Regenerate
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    type="button"
+                    disabled={!!generatingIds[form.id]}
+                    onClick={() => generateCv(form)}
+                    className="inline-flex cursor-pointer items-center justify-center gap-2 rounded-xl bg-primary px-5 py-3 text-base font-semibold text-primary-foreground shadow-sm transition hover:opacity-95 disabled:cursor-not-allowed disabled:opacity-55 dark:bg-primary"
+                  >
+                    <Wand2 size={18} />
+                    Generate CV
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => viewCv(form)}
+                  className="inline-flex cursor-pointer items-center justify-center gap-2 rounded-xl border border-sky-200 bg-sky-50 px-5 py-3 text-base font-semibold text-sky-900 transition-colors hover:bg-sky-100 dark:border-sky-900/40 dark:bg-sky-950/25 dark:text-sky-200 dark:hover:bg-sky-950/40"
+                >
+                  <FileText size={18} />
+                  View CV
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setEditMode((s) => !s)}
+                  className="inline-flex cursor-pointer items-center justify-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-5 py-3 text-base font-semibold text-amber-900 transition-colors hover:bg-amber-100 dark:border-amber-900/40 dark:bg-amber-950/25 dark:text-amber-200 dark:hover:bg-amber-950/40"
+                >
+                  <Pencil size={18} />
+                  {editMode ? "Cancel Edit" : "Edit"}
+                </button>
+                <button
+                  type="button"
+                  onClick={onDelete}
+                  className="inline-flex cursor-pointer items-center justify-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-5 py-3 text-base font-semibold text-rose-800 transition-colors hover:bg-rose-100 dark:border-rose-900/40 dark:bg-rose-950/25 dark:text-rose-200 dark:hover:bg-rose-950/40"
+                >
+                  <Trash2 size={18} />
+                  Delete
+                </button>
+                {editMode ? (
+                  <button
+                    type="button"
+                    onClick={onSave}
+                    className="inline-flex cursor-pointer items-center justify-center rounded-xl bg-emerald-600 px-6 py-3 text-base font-semibold text-white transition-colors hover:bg-emerald-700 dark:bg-emerald-600 dark:hover:bg-emerald-700"
+                  >
+                    Save changes
+                  </button>
+                ) : null}
+              </>
             ) : null}
             <button
               type="button"
