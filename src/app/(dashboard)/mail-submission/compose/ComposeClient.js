@@ -1,65 +1,444 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import toast from "react-hot-toast";
-import { ArrowLeft, Paperclip, Pencil, Send } from "lucide-react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { ArrowLeft, Pencil, Send } from "lucide-react";
+
+import PdfPreview from "@/components/PdfPreview";
+import { apiGet, apiPatch, apiPost } from "@/lib/api";
 
 function pluralize(n, one, many = `${one}s`) {
   return n === 1 ? one : many;
 }
 
+function na(v) {
+  if (v === null || v === undefined) return "";
+  const s = String(v).trim();
+  return s === "null" ? "" : s;
+}
+
+function pickGeneratedCvNode(emailPayload) {
+  if (!emailPayload || typeof emailPayload !== "object") return null;
+  const direct =
+    emailPayload.generatedCv ?? emailPayload.generated_cv ?? emailPayload.generatedCV;
+  if (direct && typeof direct === "object") return direct;
+  return null;
+}
+
+function resolvedPdfFieldsFromCv(cvLike) {
+  if (!cvLike || typeof cvLike !== "object") return { pdfUrl: "", pdfPath: "" };
+  return {
+    pdfUrl: cvLike.pdfUrl ?? cvLike.pdf_url,
+    pdfPath: cvLike.pdfPath ?? cvLike.pdf_path,
+  };
+}
+
+function resolveGeneratedCvId(emailPayload, cvNode) {
+  if (!emailPayload || typeof emailPayload !== "object") return "";
+  const fromTop =
+    emailPayload.generatedCvId ??
+    emailPayload.generated_cv_id ??
+    emailPayload.GeneratedCvId;
+  const nestedId = cvNode?.id ?? cvNode?.generatedCvId ?? cvNode?.generated_cv_id;
+  return na(fromTop ?? nestedId);
+}
+
+function resolveGeneratedPdfUrl({ pdfUrl, pdfPath }) {
+  const direct = na(pdfUrl);
+  if (direct) return direct;
+  const path = na(pdfPath);
+  if (!path) return "";
+
+  const base = process.env.NEXT_PUBLIC_API_BASE_URL || "";
+  if (!base) return path;
+  const normalizedBase = base.replace(/\/+$/, "").replace(/\/api$/i, "");
+  try {
+    return new URL(path, normalizedBase + "/").toString();
+  } catch {
+    return path;
+  }
+}
+
+function toPdfProxyUrl(url) {
+  const u = na(url);
+  if (!u) return "";
+  if (u.startsWith("/")) return u;
+  const params = new URLSearchParams({ url: u });
+  return `/api/pdf-proxy?${params.toString()}`;
+}
+
+/** Subject fallback only when API returns null — do not derive from `generatedCv`. */
+function fallbackSubjectLine() {
+  return "Candidate introduction";
+}
+
+/** Format one key highlight row (strings or `{ icon, title, description }`). */
+function formatKeyHighlightEntry(item) {
+  if (item == null) return "";
+  if (typeof item === "string" || typeof item === "number") return String(item).trim();
+  if (typeof item === "object") {
+    const icon = na(item.icon);
+    const title = na(item.title);
+    const description = na(item.description);
+    const headline = [icon, title].filter(Boolean).join(" ").trim();
+    if (headline && description)
+      return `${headline}${description ? `\n${description}` : ""}`.trim();
+    if (headline) return headline;
+    return description;
+  }
+  return String(item).trim();
+}
+
+function buildEmailBodyFromApi(data) {
+  if (!data || typeof data !== "object") return "";
+
+  const lines = [];
+  const pushPara = (s) => {
+    const t = String(s ?? "").trim();
+    if (!t) return;
+    if (lines.length) lines.push("");
+    lines.push(t);
+  };
+
+  pushPara(data.salutation);
+  pushPara(data.introParagraph);
+
+  const kh = data.keyHighlights;
+  if (Array.isArray(kh) && kh.length) {
+    if (lines.length) lines.push("");
+    lines.push("Key Highlights:");
+    lines.push("");
+    for (const item of kh) {
+      const block = formatKeyHighlightEntry(item);
+      if (!block) continue;
+      const indented = block
+        .split("\n")
+        .map((line, idx) => (idx === 0 ? `- ${line}` : `  ${line}`))
+        .join("\n");
+      lines.push(indented);
+      lines.push("");
+    }
+    while (lines[lines.length - 1] === "") lines.pop();
+  }
+
+  pushPara(data.impactStatement);
+  pushPara(data.closingStatement);
+
+  const nb = String(data.nbFooter ?? "").trim();
+  if (nb) {
+    if (lines.length) lines.push("");
+    lines.push(nb);
+  }
+
+  const sig = data.signatureBlock;
+  if (sig && typeof sig === "object") {
+    if (lines.length) lines.push("");
+    const name = String(sig.name ?? "").trim();
+    const desig = String(sig.designation ?? "").trim();
+    const c = sig.contact && typeof sig.contact === "object" ? sig.contact : {};
+    if (name) lines.push(name);
+    if (desig) lines.push(desig);
+    const parts = [
+      c.phone && `Phone: ${String(c.phone).trim()}`,
+      c.mobile && `Mobile: ${String(c.mobile).trim()}`,
+      c.address && String(c.address).trim(),
+      c.website && String(c.website).trim(),
+    ].filter(Boolean);
+    for (const p of parts) lines.push(p);
+  }
+
+  return lines.join("\n").trim();
+}
+
+const inputBase =
+  "w-full rounded-xl border border-slate-200 bg-white px-4 text-base text-slate-900 outline-none focus:ring-2 focus:ring-primary/30 read-only:cursor-default read-only:bg-slate-50 read-only:text-slate-700 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:focus:ring-primary/40 dark:read-only:bg-slate-900/40 dark:read-only:text-slate-200";
+
+const textareaBase =
+  "w-full resize-y rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm leading-6 text-slate-900 outline-none focus:ring-2 focus:ring-primary/30 read-only:bg-slate-50 read-only:text-slate-700 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:read-only:bg-slate-900/40 dark:read-only:text-slate-200";
+
+function attachmentFilename(gc) {
+  if (!gc || typeof gc !== "object") return "CV.pdf";
+  const url = na(gc.pdfUrl ?? gc.pdf_url);
+  if (url) {
+    try {
+      const path = url.split("?")[0].split("/").pop() || "";
+      const decoded = decodeURIComponent(path);
+      if (decoded.toLowerCase().endsWith(".pdf")) return decoded;
+    } catch {
+      // ignore
+    }
+  }
+  const fn = na(gc.firstName).replace(/[\\/:*?"<>|]+/g, "-") || "candidate";
+  return `${fn}_CV.pdf`;
+}
+
+/**
+ * Drop `user` from API record (not used on this page).
+ * Keeps `generatedCv` only so the PDF viewer can read `pdfUrl` / `pdfPath`.
+ */
+function sanitizeEmailRecord(data) {
+  if (!data || typeof data !== "object") return null;
+  const { user: _ignored, ...rest } = data;
+  return rest;
+}
+
+function applyEmailDataToForm(data, setPayload, setSubject, setMessageBody, setLoadError) {
+  setLoadError("");
+  const clean = sanitizeEmailRecord(data);
+  if (!clean) {
+    setLoadError("Invalid email data.");
+    return;
+  }
+  setPayload(clean);
+  setSubject(na(clean.subject) || fallbackSubjectLine());
+  const fromApiComposite = na(
+    clean.messageBody ??
+      clean.message_body ??
+      clean.emailBody ??
+      clean.email_body ??
+      clean.fullMessage ??
+      clean.full_message ??
+      clean.body ??
+      ""
+  );
+  const composed = buildEmailBodyFromApi(clean);
+  setMessageBody(
+    fromApiComposite.trim() ||
+      composed.trim() ||
+      "(No message body was returned — you can type the email below.)"
+  );
+}
+
+const STORAGE_EMAIL_ACTIVE_KEY = "generatedEmail:activeId";
+
 export default function ComposeClient() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const queryClient = useQueryClient();
+
+  /** `null` = not hydrated yet; afterwards URL id or persisted POST id from sessionStorage */
+  const [resolvedEmailId, setResolvedEmailId] = useState(null);
+
+  const [payload, setPayload] = useState(null);
+  const [loadError, setLoadError] = useState("");
+  const [isEditing, setIsEditing] = useState(false);
+  const [subject, setSubject] = useState("");
+  const [messageBody, setMessageBody] = useState("");
+  const [isSending, setIsSending] = useState(false);
+  const [isSavingEmail, setIsSavingEmail] = useState(false);
+
+  const emailIdHydrated = resolvedEmailId !== null;
+  const generatedEmailId = emailIdHydrated ? resolvedEmailId : "";
+
+  useEffect(() => {
+    const fromUrl = (
+      (searchParams?.get("generatedEmailId") || "").trim() ||
+      (searchParams?.get("emailId") || "").trim()
+    );
+    if (fromUrl) {
+      try {
+        sessionStorage.setItem(STORAGE_EMAIL_ACTIVE_KEY, fromUrl);
+      } catch {
+        // ignore
+      }
+      setResolvedEmailId(fromUrl);
+      return;
+    }
+    try {
+      const stored = (sessionStorage.getItem(STORAGE_EMAIL_ACTIVE_KEY) || "").trim();
+      setResolvedEmailId(stored);
+    } catch {
+      setResolvedEmailId("");
+    }
+  }, [searchParams]);
+
+  const generatedEmailQuery = useQuery({
+    queryKey: ["generated-email", "detail", generatedEmailId],
+    enabled: emailIdHydrated && Boolean(generatedEmailId),
+    queryFn: async () => {
+      const res = await apiGet(
+        `/generated-email/${encodeURIComponent(generatedEmailId)}`
+      );
+      if (res?.success === false)
+        throw new Error(res?.message || "Failed to load generated email");
+      const data = res?.data;
+      if (!data || typeof data !== "object")
+        throw new Error("Invalid response from server");
+      return data;
+    },
+    staleTime: 30_000,
+  });
+
+  useEffect(() => {
+    if (!emailIdHydrated || !generatedEmailId) return;
+    if (generatedEmailQuery.isError) {
+      setLoadError(generatedEmailQuery.error?.message || "Failed to load email.");
+      return;
+    }
+    if (!generatedEmailQuery.data) return;
+    applyEmailDataToForm(
+      generatedEmailQuery.data,
+      setPayload,
+      setSubject,
+      setMessageBody,
+      setLoadError
+    );
+  }, [
+    generatedEmailId,
+    generatedEmailQuery.data,
+    generatedEmailQuery.isError,
+    generatedEmailQuery.error,
+    emailIdHydrated,
+  ]);
+
+  useEffect(() => {
+    if (!emailIdHydrated) return;
+    if (generatedEmailId) return;
+    setLoadError("");
+    try {
+      const raw = sessionStorage.getItem("generatedEmail:last");
+      if (!raw) {
+        setLoadError(
+          "No generated email id in the URL and nothing saved locally. Go back to the queue and click Proceed to Compose Email."
+        );
+        return;
+      }
+      const res = JSON.parse(raw);
+      const data = res?.data;
+      if (!data || typeof data !== "object") {
+        setLoadError("Invalid saved email response.");
+        return;
+      }
+      applyEmailDataToForm(data, setPayload, setSubject, setMessageBody, setLoadError);
+    } catch (e) {
+      setLoadError(e?.message || "Could not read saved email.");
+    }
+  }, [generatedEmailId, emailIdHydrated]);
 
   const selectedCount = useMemo(() => {
+    const ids = payload?.contactIds ?? payload?.contact_ids;
+    if (Array.isArray(ids) && ids.length > 0) return ids.length;
+
     const raw = searchParams?.get("contacts");
     const n = Number(raw);
     if (Number.isFinite(n) && n > 0) return Math.floor(n);
 
-    const ids = (searchParams?.get("ids") || "").trim();
-    if (!ids) return 0;
-    return ids.split(",").filter(Boolean).length;
-  }, [searchParams]);
+    const idStr = (searchParams?.get("ids") || "").trim();
+    if (!idStr) return 0;
+    return idStr.split(",").filter(Boolean).length;
+  }, [payload, searchParams]);
 
-  const [isEditing, setIsEditing] = useState(false);
-  const [subject, setSubject] = useState(
-    "Driving Inclusive Change: Founder of AbleConnect Seeking New Opportunities"
-  );
-  const [body, setBody] = useState(
-    [
-      "Introducing a distinguished leader in digital inclusion and social equity innovation, whose career is marked by transformative projects like AbleConnect Ghana — a pioneering platform for Persons with Disabilities (PWDs).",
-      "",
-      "Key Highlights:",
-      "",
-      "- Visionary Leadership: As Founder of AbleConnect, spearheaded the establishment of a unique national platform that connects PWDs to essential services and opportunities across Ghana.",
-      "- Strategic Development & Implementation: Orchestrated the design and rollout of a comprehensive WhatsApp AI chatbot system, optimizing accessibility for users with disabilities and enhancing service navigation through a multilingual interface.",
-      "- Innovative Solutions: Developed core system components, such as Registration & Case Management System and Service Navigation Engine, providing centralized data management and streamlined service access.",
-      "- Inclusive Design & Accessibility: Advanced the platform’s accessibility in four local languages, accommodating users visually, hearing, and mobility-impaired, and ensuring widespread usability.",
-      "- Impact Measurement & Analytics: Introduced a national dashboard for tracking program impact, effectively monitoring training participation, employment outcomes, and technology access for over 500,000 PWDs targeted.",
-      "- Cross-Sector Partnerships: Established robust collaborations with government agencies and non-profit organizations to expand service offerings, including job placements, assistive technology support, and legal aid.",
-      "",
-      "With comprehensive expertise in managing projects at the intersection of technology and social good, the candidate is seeking leadership opportunities that leverage their passion for change-making and expertise in digital transformation to create sustainable impact.",
-      "",
-      "Best regards,",
-      "Edukal Recruitment Team",
-    ].join("\n")
+  const cvNodeFromEmail = useMemo(
+    () => (payload ? pickGeneratedCvNode(payload) : null),
+    [payload]
   );
 
-  const [isSending, setIsSending] = useState(false);
+  const generatedCvRowId = useMemo(
+    () => resolveGeneratedCvId(payload ?? {}, cvNodeFromEmail),
+    [payload, cvNodeFromEmail]
+  );
+
+  const pdfDirectFromEmbeddedCv = useMemo(() => {
+    const absolute = resolveGeneratedPdfUrl(resolvedPdfFieldsFromCv(cvNodeFromEmail));
+    return na(absolute);
+  }, [cvNodeFromEmail]);
+
+  const generatedCvPdfQuery = useQuery({
+    queryKey: ["generated-cv", "compose-pdf", generatedCvRowId],
+    enabled: Boolean(generatedCvRowId && payload && !pdfDirectFromEmbeddedCv),
+    queryFn: async () => {
+      const res = await apiGet(`/generated-cv/${encodeURIComponent(generatedCvRowId)}`);
+      if (res?.success === false)
+        throw new Error(res?.message || "Failed to load generated CV");
+      const raw = res?.data ?? res;
+      if (!raw || typeof raw !== "object") throw new Error("Invalid CV response");
+      return raw;
+    },
+    staleTime: 60_000,
+  });
+
+  const effectiveCvForPreview = useMemo(() => {
+    if (pdfDirectFromEmbeddedCv && cvNodeFromEmail && typeof cvNodeFromEmail === "object") {
+      return cvNodeFromEmail;
+    }
+    const fetched = generatedCvPdfQuery.data;
+    if (fetched && typeof fetched === "object") return fetched;
+    if (cvNodeFromEmail && typeof cvNodeFromEmail === "object") return cvNodeFromEmail;
+    return null;
+  }, [cvNodeFromEmail, pdfDirectFromEmbeddedCv, generatedCvPdfQuery.data]);
+
+  const absolutePdfHref = useMemo(() => {
+    if (!effectiveCvForPreview || typeof effectiveCvForPreview !== "object") return "";
+    return resolveGeneratedPdfUrl(resolvedPdfFieldsFromCv(effectiveCvForPreview));
+  }, [effectiveCvForPreview]);
+
+  const proxiedPdfUrl = useMemo(() => {
+    const u = na(absolutePdfHref);
+    if (!u) return "";
+    return toPdfProxyUrl(u);
+  }, [absolutePdfHref]);
+
+  const attachmentName = useMemo(
+    () => attachmentFilename(effectiveCvForPreview),
+    [effectiveCvForPreview]
+  );
+
+  async function persistEmailDraft() {
+    if (!generatedEmailId) {
+      toast.error("No generated email id to update.");
+      return false;
+    }
+    if (!na(subject).trim()) {
+      toast.error("Subject is required");
+      return false;
+    }
+    if (!messageBody.trim()) {
+      toast.error("Email body is required");
+      return false;
+    }
+    const toastId = toast.loading("Saving email…");
+    setIsSavingEmail(true);
+    try {
+      const body = {
+        subject: na(subject).trim(),
+        messageBody: messageBody.trim(),
+      };
+      const res = await apiPatch(
+        `/generated-email/${encodeURIComponent(generatedEmailId)}`,
+        body
+      );
+      if (res?.success === false) throw new Error(res?.message || "Update failed");
+
+      queryClient.invalidateQueries({
+        queryKey: ["generated-email", "detail", generatedEmailId],
+      });
+      toast.success("Email saved", { id: toastId });
+      return true;
+    } catch (e) {
+      toast.error(e?.message || "Failed to save email", { id: toastId });
+      return false;
+    } finally {
+      setIsSavingEmail(false);
+    }
+  }
 
   async function onSend() {
     if (!selectedCount) {
       toast.error("No selected contacts found. Please go back and select contacts.");
       return;
     }
-    if (!subject.trim()) {
+    if (!na(subject)) {
       toast.error("Subject is required");
       return;
     }
-    if (!body.trim()) {
+    if (!messageBody.trim()) {
       toast.error("Email body is required");
+      return;
+    }
+    if (!generatedEmailId) {
+      toast.error("No generated email id found to send.");
       return;
     }
     if (isSending) return;
@@ -69,11 +448,17 @@ export default function ComposeClient() {
       `Sending email to ${selectedCount} ${pluralize(selectedCount, "contact")}...`
     );
 
-    await new Promise((r) => setTimeout(r, 1200));
+    try {
+      const res = await apiPost(`/generated-email/send/${encodeURIComponent(generatedEmailId)}`);
+      if (res?.success === false) throw new Error(res?.message || "Failed to send email");
 
-    toast.success("Email sent", { id: toastId });
-    setIsSending(false);
-    router.push("/mail-submission");
+      toast.success("Email sent successfully", { id: toastId });
+      router.push("/mail-submission");
+    } catch (error) {
+      toast.error(error?.message || "Failed to send email", { id: toastId });
+    } finally {
+      setIsSending(false);
+    }
   }
 
   return (
@@ -96,6 +481,14 @@ export default function ComposeClient() {
             Review, customize, and automatically dispatch Candidate CVs to selected
             contacts.
           </p>
+          {!emailIdHydrated || (generatedEmailId && generatedEmailQuery.isPending) ? (
+            <p className="mt-3 text-sm text-black/60 dark:text-slate-400">
+              {!emailIdHydrated ? "Preparing…" : "Loading email…"}
+            </p>
+          ) : null}
+          {loadError ? (
+            <p className="mt-3 text-sm text-amber-800 dark:text-amber-200">{loadError}</p>
+          ) : null}
         </div>
 
         <div className="flex items-center gap-3">
@@ -103,68 +496,112 @@ export default function ComposeClient() {
             <span className="text-base font-medium text-black/60 dark:text-slate-400">
               Selected contacts:
             </span>
-            <span className="ml-2 text-xl font-semibold text-primary">
-              {selectedCount}
-            </span>
+            <span className="ml-2 text-xl font-semibold text-primary">{selectedCount}</span>
           </div>
 
           <button
             type="button"
-            onClick={() => {
+            disabled={isSavingEmail || !generatedEmailId}
+            onClick={async () => {
               if (!isEditing) {
                 setIsEditing(true);
                 return;
               }
+              const ok = await persistEmailDraft();
+              if (!ok) return;
               setIsEditing(false);
-              toast.success("Email saved");
             }}
             className={[
-              "inline-flex cursor-pointer items-center justify-center gap-2 rounded-xl px-4 py-3 text-sm font-semibold transition-colors",
+              "inline-flex cursor-pointer items-center justify-center gap-2 rounded-xl px-4 py-3 text-sm font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-55",
               isEditing
                 ? "border border-emerald-600 bg-emerald-600 text-white hover:bg-emerald-700 dark:border-emerald-500 dark:bg-emerald-500 dark:hover:bg-emerald-600"
                 : "border border-slate-200 bg-white text-slate-800 hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:hover:bg-slate-900",
             ].join(" ")}
           >
             <Pencil size={16} />
-            {isEditing ? "Save Email" : "Edit Email"}
+            {isSavingEmail ? "Saving…" : isEditing ? "Save Email" : "Edit Email"}
           </button>
         </div>
       </div>
 
       <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-950">
-        <div className="space-y-2">
-          <label className="text-sm font-semibold text-black/70 dark:text-slate-300">
-            Subject:
-          </label>
+        <div className="space-y-3">
+          <div className="text-xs font-semibold uppercase tracking-wide text-black/55 dark:text-slate-400">
+            Subject
+          </div>
           <input
             value={subject}
             onChange={(e) => setSubject(e.target.value)}
-            disabled={!isEditing}
-            className="h-12 w-full rounded-xl border border-slate-200 bg-white px-4 text-base text-slate-900 outline-none focus:ring-2 focus:ring-primary/30 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-700 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:placeholder:text-slate-500 dark:focus:ring-primary/40 dark:disabled:bg-slate-900/40 dark:disabled:text-slate-200"
-          />
-        </div>
-
-        <div className="mt-5 space-y-2">
-          <label className="text-sm font-semibold text-black/70 dark:text-slate-300">
-            Message Body:
-          </label>
-          <textarea
-            value={body}
-            onChange={(e) => setBody(e.target.value)}
             readOnly={!isEditing}
-            rows={14}
-            className="w-full resize-y rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm leading-6 text-slate-900 outline-none focus:ring-2 focus:ring-primary/30 read-only:cursor-not-allowed read-only:bg-slate-50 read-only:text-slate-700 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:placeholder:text-slate-500 dark:focus:ring-primary/40 dark:read-only:bg-slate-900/40 dark:read-only:text-slate-200"
+            placeholder="Email subject"
+            className={`h-12 ${inputBase} dark:placeholder:text-slate-500`}
           />
         </div>
 
-        <div className="mt-5 space-y-2">
+        <div className="mt-6 space-y-3">
+          <div className="text-xs font-semibold uppercase tracking-wide text-black/55 dark:text-slate-400">
+            Message (salutation, intro, highlights as bullets, impact, closing, NB, signature)
+          </div>
+          <p className="text-xs text-black/45 dark:text-slate-500">
+            Generated from the API: <strong>Key Highlights</strong> are merged as a point-wise list
+            under “Key Highlights:”.
+          </p>
+          <textarea
+            value={messageBody}
+            onChange={(e) => setMessageBody(e.target.value)}
+            readOnly={!isEditing}
+            rows={22}
+            spellCheck={true}
+            placeholder="Email message…"
+            className={`${textareaBase} min-h-[420px] whitespace-pre-wrap read-only:cursor-default`}
+          />
+        </div>
+
+        <div className="mt-6 space-y-3">
           <div className="text-sm font-semibold text-black/70 dark:text-slate-300">
-            Included Attachment:
+            Included Attachment (PDF preview)
           </div>
-          <div className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-medium text-slate-900 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100">
-            <Paperclip size={16} className="opacity-80" />
-            Naana_Abena_Amanoа_Sifah_CV_Enhanced.pdf
-          </div>
+          {generatedCvPdfQuery.isPending ? (
+            <p className="text-sm text-black/60 dark:text-slate-400">Loading CV PDF…</p>
+          ) : null}
+          {generatedCvPdfQuery.isError ? (
+            <p className="text-sm text-rose-700 dark:text-rose-300">
+              {generatedCvPdfQuery.error?.message || "Could not load CV for PDF"}
+            </p>
+          ) : null}
+          {absolutePdfHref ? (
+            <div className="text-xs break-all text-black/55 dark:text-slate-400">
+              <span className="font-medium text-black/65 dark:text-slate-400">generatedCv.pdfUrl: </span>
+              <a
+                href={proxiedPdfUrl || toPdfProxyUrl(absolutePdfHref)}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-primary underline decoration-primary/30 underline-offset-2 hover:opacity-90"
+              >
+                {absolutePdfHref}
+              </a>
+            </div>
+          ) : null}
+          {!proxiedPdfUrl &&
+          !(generatedCvRowId && (generatedCvPdfQuery.isPending || generatedCvPdfQuery.isFetching)) ? (
+            <p className="text-sm text-black/60 dark:text-slate-400">
+              {!payload ? (
+                "Generate an email from the mail queue to attach the CV PDF."
+              ) : generatedCvRowId ? (
+                "No PDF URL or path found for this generated CV."
+              ) : (
+                "This email record did not include a generated CV reference."
+              )}
+            </p>
+          ) : null}
+          {proxiedPdfUrl ? (
+            <>
+              <div className="text-xs text-black/50 dark:text-slate-500">{attachmentName}</div>
+              <div className="max-h-[560px] overflow-y-auto rounded-xl border border-slate-200 bg-slate-100 p-3 dark:border-slate-800 dark:bg-slate-900">
+                <PdfPreview url={proxiedPdfUrl} className="min-h-[280px]" />
+              </div>
+            </>
+          ) : null}
         </div>
       </div>
 
@@ -182,4 +619,3 @@ export default function ComposeClient() {
     </div>
   );
 }
-
