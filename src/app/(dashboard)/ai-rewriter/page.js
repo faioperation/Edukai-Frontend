@@ -207,10 +207,18 @@ function normalizeCvPayload(cv) {
 
 function buildEnhancedFromGeneratedCv(data) {
   const d = data || {};
-  const { email, phone, other } = parseContactDetails(d.contactDetails);
 
   const name = [na(d.firstName), na(d.lastName)].filter(Boolean).join(" ") || "—";
-  const designation = na(d.professionalTitle) || "—";
+  
+  let designation = na(d.professionalTitle);
+  if (!designation && Array.isArray(d.expertise) && d.expertise.length > 0) {
+    designation = d.expertise.join(", ");
+  }
+  if (!designation) {
+    designation = "—";
+  }
+
+  const contactDetails = na(d.contactDetails) || "—";
   const location = na(d.location) || "—";
   const logo = na(d.logo);
 
@@ -220,23 +228,31 @@ function buildEnhancedFromGeneratedCv(data) {
   const profileTitle = na(d.profileTitle) || "Professional Profile";
   const profileContent = na(d.profileContent) || "N/A";
 
+  let skillsItems = [];
+  if (d.skills && Array.isArray(d.skills.items)) {
+    skillsItems = d.skills.items;
+  } else if (Array.isArray(d.skills)) {
+    skillsItems = d.skills;
+  }
+  const skillsText = toBullets(skillsItems, (s) => s);
+  const skillsTitle = d.skills?.title || "Skills";
+
   return {
     header: {
       logo,
       name,
       designation,
+      contactDetails,
       location,
-      phone: phone || other || "",
-      email: email || "",
     },
     sections: [
       { id: "profile", title: profileTitle, body: profileContent },
       { id: "history", title: "Employment History", body: jobsText },
       { id: "education", title: "Education & Qualifications", body: eduText },
       {
-        id: "expertise",
-        title: "Technical Expertise",
-        body: profileContent,
+        id: "skills",
+        title: skillsTitle,
+        body: skillsText,
       },
     ],
   };
@@ -537,24 +553,22 @@ export default function AiRewriterPage() {
       // Header mappings
       if (id === "header.name") patch.firstName = na(value) || generated.firstName;
       if (id === "header.designation") patch.professionalTitle = na(value);
+      if (id === "header.contactDetails") patch.contactDetails = na(value);
       if (id === "header.location") patch.location = na(value);
-      if (id === "header.phone" || id === "header.email") {
-        const cur = parseContactDetails(generated?.contactDetails);
-        const next = {
-          ...cur,
-          email: id === "header.email" ? na(value) : cur.email,
-          phone: id === "header.phone" ? na(value) : cur.phone,
-        };
-        patch.contactDetails = buildContactDetails(next);
-      }
 
       // Section mappings
       if (id === "profile") patch.profileContent = na(value);
       if (id === "history") patch.jobs = parseJobsText(value);
       if (id === "education") patch.educations = parseEducationText(value);
-
-      // In our UI "Technical Expertise" is derived from profileContent, so keep it editable too.
-      if (id === "expertise") patch.profileContent = na(value);
+      if (id === "skills") {
+        const items = value
+          .split("\n")
+          .map((l) => l.trim())
+          .filter((l) => l.startsWith("-"))
+          .map((l) => na(l.replace(/^-+\s*/, "")))
+          .filter(Boolean);
+        patch.skills = { items, title: generated?.skills?.title || "Skills" };
+      }
 
       const updatedCv = await persistGeneratedCvPatch(patch);
       setGenerated(updatedCv);
@@ -630,8 +644,20 @@ export default function AiRewriterPage() {
   }
 
   function proceedToMail() {
-    toast.success("Proceeding to mail submission...");
-    router.push("/mail-submission");
+    const cvId = generated?.id;
+    if (!cvId) {
+      toast.error("Missing generated CV id");
+      return;
+    }
+
+    try {
+      sessionStorage.setItem("generatedCv:activeId", String(cvId));
+    } catch {
+      // ignore
+    }
+
+    toast.success("Proceeding to contact queue...");
+    router.push(`/mail-submission?generatedCvId=${encodeURIComponent(String(cvId))}`);
   }
 
   return (
@@ -760,6 +786,22 @@ export default function AiRewriterPage() {
                       />
                     </div>
 
+                    <div className="mt-2">
+                      <CvHoverEditText
+                        id="header.contactDetails"
+                        value={enhanced.header.contactDetails}
+                        draft={draftValue}
+                        setDraft={setDraftValue}
+                        isActive={activeEditId === "header.contactDetails"}
+                        onStart={startEdit}
+                        onSave={saveEdit}
+                        onCancel={cancelEdit}
+                        align="center"
+                        textClassName="text-sm font-medium text-slate-600"
+                        placeholder="Contact Details"
+                      />
+                    </div>
+
                     <div className="mt-2 flex flex-col items-center gap-1 text-sm text-slate-600 sm:flex-row sm:justify-center">
                       <CvHoverEditText
                         id="header.location"
@@ -773,34 +815,6 @@ export default function AiRewriterPage() {
                         align="center"
                         textClassName="max-w-md"
                         placeholder="Location"
-                      />
-                      <span className="hidden sm:inline">•</span>
-                      <CvHoverEditText
-                        id="header.phone"
-                        value={enhanced.header.phone}
-                        draft={draftValue}
-                        setDraft={setDraftValue}
-                        isActive={activeEditId === "header.phone"}
-                        onStart={startEdit}
-                        onSave={saveEdit}
-                        onCancel={cancelEdit}
-                        align="center"
-                        textClassName="max-w-md"
-                        placeholder="Phone number"
-                      />
-                      <span className="hidden sm:inline">•</span>
-                      <CvHoverEditText
-                        id="header.email"
-                        value={enhanced.header.email}
-                        draft={draftValue}
-                        setDraft={setDraftValue}
-                        isActive={activeEditId === "header.email"}
-                        onStart={startEdit}
-                        onSave={saveEdit}
-                        onCancel={cancelEdit}
-                        align="center"
-                        textClassName="max-w-md"
-                        placeholder="Email"
                       />
                     </div>
                   </div>

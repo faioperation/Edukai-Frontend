@@ -20,7 +20,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 
-import { apiGet, apiPost } from "@/lib/api";
+import { apiDelete, apiGet, apiPatch, apiPost } from "@/lib/api";
 
 const DEFAULT_LIMIT = 200;
 
@@ -64,10 +64,12 @@ function mapImportOrgToRow(item) {
     addressLine1: d.AddressLine1 ?? d.addressLine1 ?? "",
     addressLine2: d.AddressLine2 ?? d.addressLine2 ?? "",
     town: d.Town ?? d.town ?? "",
+    country: d.country ?? d.Country ?? "",
     county: d.county ?? "",
     region: d.region ?? "",
     district: d.district ?? "",
-    country: d.country ?? "",
+    latitude: d.latitude ?? d.Latitude ?? "",
+    longitude: d.longitude ?? d.Longitude ?? "",
     contactCount: d.contactCount ?? 0,
     isManual: !!d.isManual,
     createdAt: d.createdAt ?? null,
@@ -169,6 +171,31 @@ function optionLabel(x) {
   return String(x).replaceAll("_", " ");
 }
 
+function titleCaseWords(s) {
+  const t = String(s || "").trim();
+  if (!t) return "";
+  return t
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+    .join(" ");
+}
+
+function phaseLabelForApi(normalizedPhase) {
+  const p = normalizePhase(normalizedPhase);
+  if (!p) return "";
+  return titleCaseWords(optionLabel(p));
+}
+
+function genderLabelForApi(normalizedGender) {
+  const g = normalizeGender(normalizedGender);
+  if (!g) return "";
+  if (g === "boys") return "Boys";
+  if (g === "girls") return "Girls";
+  if (g === "mixed") return "Mixed";
+  return titleCaseWords(g);
+}
+
 function pillClasses() {
   return "inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-semibold";
 }
@@ -188,6 +215,21 @@ export default function OrganizationsPage() {
   const [dialogMode, setDialogMode] = useState("add"); // add | edit
   const [draft, setDraft] = useState(null);
 
+  /** `{ id, name }` while delete confirmation modal is open */
+  const [deleteTarget, setDeleteTarget] = useState(null);
+  const [deleteSubmitting, setDeleteSubmitting] = useState(false);
+
+  const importOrgFiltersQuery = useQuery({
+    queryKey: ["import-organization", "filters"],
+    queryFn: async () => {
+      const res = await apiGet("/import-organization/filters");
+      if (res?.success === false)
+        throw new Error(res?.message || "Failed to load organization filters");
+      return res;
+    },
+    staleTime: 60_000,
+  });
+
   const importOrgsQuery = useQuery({
     queryKey: ["import-organization", "all", { q, phase, region, gender, localAuthority, page }],
     queryFn: async () => {
@@ -201,11 +243,17 @@ export default function OrganizationsPage() {
         page,
       };
       const res = await apiGet("/import-organization/all", { params });
+      console.log(res);
       if (res?.success === false)
         throw new Error(res?.message || "Failed to load imported organizations");
-      const raw = res?.data ?? res;
-      const items = Array.isArray(raw?.data) ? raw.data : [];
-      const meta = raw?.meta || {};
+      const payload = res || {};
+      const items = Array.isArray(payload?.data)
+        ? payload.data
+        : Array.isArray(payload?.items)
+          ? payload.items
+          : [];
+
+      const meta = payload?.meta || {};
       return {
         items: items.map(mapImportOrgToRow),
         meta: {
@@ -219,7 +267,7 @@ export default function OrganizationsPage() {
     staleTime: 10_000,
     keepPreviousData: true,
   });
-
+  // console.log(importOrgsQuery.data);
   const rows = importOrgsQuery.data?.items || [];
   const meta = importOrgsQuery.data?.meta || {
     page,
@@ -227,11 +275,6 @@ export default function OrganizationsPage() {
     total: rows.length,
     totalPage: 1,
   };
-
-  const towns = useMemo(() => {
-    const set = new Set(rows.map((r) => r.town).filter(Boolean));
-    return Array.from(set).sort((a, b) => a.localeCompare(b));
-  }, [rows]);
 
   const regions = useMemo(() => {
     const set = new Set(rows.map((r) => r.region).filter(Boolean));
@@ -242,6 +285,37 @@ export default function OrganizationsPage() {
     const set = new Set(rows.map((r) => r.localAuthority).filter(Boolean));
     return Array.from(set).sort((a, b) => a.localeCompare(b));
   }, [rows]);
+
+  const filterOptions = useMemo(() => {
+    const payload = importOrgFiltersQuery.data || {};
+    const d = payload?.data || payload?.filters || payload || {};
+
+    const from = (...keys) => {
+      for (const k of keys) {
+        const v = d?.[k];
+        if (Array.isArray(v)) return v.filter(Boolean);
+      }
+      return null;
+    };
+
+    const phasesFromApi = from("phases", "phase", "phaseList");
+    const gendersFromApi = from("genders", "gender", "genderList");
+    const regionsFromApi = from("regions", "region", "regionList");
+    const lasFromApi = from(
+      "localAuthorities",
+      "local_authorities",
+      "localAuthority",
+      "local_authority",
+      "authorities"
+    );
+
+    return {
+      phases: (phasesFromApi?.length ? phasesFromApi : PHASES).map((x) => normalizePhase(x)),
+      genders: (gendersFromApi?.length ? gendersFromApi : GENDERS).map((x) => normalizeGender(x)),
+      regions: (regionsFromApi?.length ? regionsFromApi : regions).map((x) => String(x)),
+      localAuthorities: (lasFromApi?.length ? lasFromApi : authorities).map((x) => String(x)),
+    };
+  }, [authorities, importOrgFiltersQuery.data, regions]);
 
   const filtered = useMemo(() => {
     const query = q.trim().toLowerCase();
@@ -266,26 +340,41 @@ export default function OrganizationsPage() {
   function openAdd() {
     setDialogMode("add");
     setDraft({
-      id: "",
-      urn: "",
-      name: "",
+      organizationName: "",
       localAuthority: "",
+      postcode: "",
+      urn: "",
+      town: "",
       phase: "",
       gender: "",
-      telephone: "",
       street: "",
-      postcode: "",
       addressLine1: "",
-      addressLine2: "",
-      town: "",
-      county: "",
+      telephoneNumber: "",
+      country: "",
+      latitude: "",
+      longitude: "",
     });
     setDialogOpen(true);
   }
 
   function openEdit(row) {
     setDialogMode("edit");
-    setDraft({ ...row });
+    setDraft({
+      organizationName: row.name || "",
+      localAuthority: row.localAuthority || "",
+      postcode: row.postcode || "",
+      urn: row.urn || "",
+      town: row.town || "",
+      phase: row.phase || "",
+      gender: row.gender || "",
+      street: row.street || "",
+      addressLine1: row.addressLine1 || "",
+      telephoneNumber: row.telephone || "",
+      country: row.country || "",
+      latitude: row.latitude != null && row.latitude !== "" ? String(row.latitude) : "",
+      longitude: row.longitude != null && row.longitude !== "" ? String(row.longitude) : "",
+      rowId: row.id,
+    });
     setDialogOpen(true);
   }
 
@@ -296,42 +385,111 @@ export default function OrganizationsPage() {
 
   function validateDraft(d) {
     const required = [
-      ["urn", "URN"],
-      ["name", "Organization name"],
+      ["organizationName", "Organization name"],
       ["localAuthority", "Local authority"],
+      ["postcode", "Postcode"],
+      ["urn", "URN"],
+      ["town", "Town"],
       ["phase", "Phase"],
       ["gender", "Gender"],
-      ["telephone", "Telephone"],
       ["street", "Street"],
-      ["postcode", "Postcode"],
-      ["town", "Town"],
+      ["addressLine1", "Address line 1"],
+      ["telephoneNumber", "Telephone"],
+      ["country", "Country"],
+      ["latitude", "Latitude"],
+      ["longitude", "Longitude"],
     ];
     for (const [key, label] of required) {
-      if (!String(d?.[key] || "").trim()) return `${label} is required`;
+      if (!String(d?.[key] ?? "").trim()) return `${label} is required`;
     }
+    const lat = Number(String(d.latitude).trim());
+    const lng = Number(String(d.longitude).trim());
+    if (!Number.isFinite(lat)) return "Latitude must be a valid number";
+    if (!Number.isFinite(lng)) return "Longitude must be a valid number";
     return null;
   }
 
-  function saveDraft() {
+  function buildOrganizationBody(d) {
+    return {
+      OrganizationName: String(d?.organizationName || "").trim(),
+      LocalAuthority: String(d?.localAuthority || "").trim(),
+      Postcode: String(d?.postcode || "").trim(),
+      URN: String(d?.urn || "").trim(),
+      Town: String(d?.town || "").trim(),
+      Phase: phaseLabelForApi(d?.phase),
+      Gender: genderLabelForApi(d?.gender),
+      Street: String(d?.street || "").trim(),
+      AddressLine1: String(d?.addressLine1 || "").trim(),
+      TelephoneNumber: String(d?.telephoneNumber || "").trim(),
+      country: String(d?.country || "").trim(),
+      latitude: Number(String(d?.latitude || "").trim()),
+      longitude: Number(String(d?.longitude || "").trim()),
+    };
+  }
+
+  async function saveDraft() {
     const err = validateDraft(draft);
     if (err) return toast.error(err);
 
-    if (dialogMode === "add") {
-      const newRow = { ...draft, id: `org_${Date.now()}` };
-      setRows((prev) => [newRow, ...prev]);
-      toast.success("Organization added");
-      closeDialog();
-      return;
-    }
+    const body = buildOrganizationBody(draft);
+    const loadingId = toast.loading(
+      dialogMode === "edit" ? "Updating organization…" : "Creating organization…"
+    );
 
-    setRows((prev) => prev.map((r) => (r.id === draft.id ? draft : r)));
-    toast.success("Organization updated");
-    closeDialog();
+    try {
+      let res;
+      if (dialogMode === "edit") {
+        const id = String(draft?.rowId ?? "").trim();
+        if (!id) throw new Error("Missing organization id");
+        res = await apiPatch(`/organizations/${encodeURIComponent(id)}`, body);
+      } else {
+        res = await apiPost("/organizations/create-organization", body);
+      }
+      if (res?.success === false) throw new Error(res?.message || "Request failed");
+
+      toast.success(res?.message || "Saved successfully", { id: loadingId });
+      closeDialog();
+      if (dialogMode === "add") setPage(1);
+      queryClient.invalidateQueries({ queryKey: ["import-organization", "all"] });
+    } catch (e) {
+      toast.error(e?.message || "Request failed", { id: loadingId });
+    }
   }
 
-  function onDelete(id) {
-    setRows((prev) => prev.filter((r) => r.id !== id));
-    toast.success("Organization deleted");
+  function openDeleteModal(row) {
+    const oid = String(row?.id ?? "").trim();
+    if (!oid) return toast.error("Missing organization id");
+    setDeleteTarget({
+      id: oid,
+      name: String(row?.name || "").trim() || "this organization",
+    });
+  }
+
+  function closeDeleteModal() {
+    if (deleteSubmitting) return;
+    setDeleteTarget(null);
+  }
+
+  async function confirmDeleteOrganization() {
+    if (!deleteTarget?.id) return;
+
+    setDeleteSubmitting(true);
+    const loadingId = toast.loading("Deleting organization…");
+
+    try {
+      const res = await apiDelete(
+        `/organizations/${encodeURIComponent(deleteTarget.id)}`
+      );
+      if (res && res.success === false) throw new Error(res.message || "Delete failed");
+
+      toast.success((res && res.message) || "Organization deleted", { id: loadingId });
+      setDeleteTarget(null);
+      queryClient.invalidateQueries({ queryKey: ["import-organization", "all"] });
+    } catch (e) {
+      toast.error(e?.message || "Delete failed", { id: loadingId });
+    } finally {
+      setDeleteSubmitting(false);
+    }
   }
 
   function triggerImport() {
@@ -440,7 +598,7 @@ export default function OrganizationsPage() {
             className="h-12 w-full cursor-pointer rounded-xl border border-slate-200 bg-white px-4 pr-10 text-base text-slate-900 outline-none focus:ring-2 focus:ring-primary/30 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:focus:ring-primary/40"
           >
             <option value="all">All Phases</option>
-            {PHASES.map((p) => (
+            {filterOptions.phases.map((p) => (
               <option key={p} value={p}>
                 {optionLabel(p)}
               </option>
@@ -453,7 +611,7 @@ export default function OrganizationsPage() {
             className="h-12 w-full cursor-pointer rounded-xl border border-slate-200 bg-white px-4 pr-10 text-base text-slate-900 outline-none focus:ring-2 focus:ring-primary/30 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:focus:ring-primary/40"
           >
             <option value="all">All Regions</option>
-            {regions.map((r) => (
+            {filterOptions.regions.map((r) => (
               <option key={r} value={r}>
                 {r}
               </option>
@@ -466,7 +624,7 @@ export default function OrganizationsPage() {
             className="h-12 w-full cursor-pointer rounded-xl border border-slate-200 bg-white px-4 pr-10 text-base text-slate-900 outline-none focus:ring-2 focus:ring-primary/30 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:focus:ring-primary/40"
           >
             <option value="all">All Genders</option>
-            {GENDERS.map((g) => (
+            {filterOptions.genders.map((g) => (
               <option key={g} value={g}>
                 {optionLabel(g)}
               </option>
@@ -479,7 +637,7 @@ export default function OrganizationsPage() {
             className="h-12 w-full cursor-pointer rounded-xl border border-slate-200 bg-white px-4 pr-10 text-base text-slate-900 outline-none focus:ring-2 focus:ring-primary/30 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:focus:ring-primary/40"
           >
             <option value="all">All Local Authority</option>
-            {authorities.map((a) => (
+            {filterOptions.localAuthorities.map((a) => (
               <option key={a} value={a}>
                 {a}
               </option>
@@ -574,7 +732,7 @@ export default function OrganizationsPage() {
                       </button>
                       <button
                         type="button"
-                        onClick={() => onDelete(row.id)}
+                        onClick={() => openDeleteModal(row)}
                         className="inline-flex cursor-pointer items-center justify-center rounded-xl border border-rose-200 bg-rose-50 p-2.5 text-rose-700 transition-colors hover:bg-rose-100 dark:border-rose-900/40 dark:bg-rose-950/25 dark:text-rose-200 dark:hover:bg-rose-950/40"
                         aria-label={`Delete ${row.name}`}
                       >
@@ -654,7 +812,7 @@ export default function OrganizationsPage() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => onDelete(row.id)}
+                  onClick={() => openDeleteModal(row)}
                   className="inline-flex cursor-pointer items-center justify-center rounded-xl border border-rose-200 bg-rose-50 p-2.5 text-rose-700 transition-colors hover:bg-rose-100 dark:border-rose-900/40 dark:bg-rose-950/25 dark:text-rose-200 dark:hover:bg-rose-950/40"
                   aria-label={`Delete ${row.name}`}
                 >
@@ -713,184 +871,206 @@ export default function OrganizationsPage() {
       </div>
 
       <Dialog open={dialogOpen} onOpenChange={(o) => (o ? setDialogOpen(true) : closeDialog())}>
-        <DialogContent className="sm:max-w-4xl" showCloseButton>
+        <DialogContent
+          className="flex max-h-[90vh] flex-col overflow-hidden sm:max-w-4xl"
+          showCloseButton
+        >
           <DialogHeader>
             <DialogTitle className="text-2xl text-slate-900 dark:text-slate-100">
               {dialogMode === "add" ? "Add Organization" : "Edit Organization"}
             </DialogTitle>
           </DialogHeader>
 
-          {!draft ? null : (
-            <div className="grid gap-5 sm:grid-cols-2">
-              <div className="space-y-1">
-                <label className="text-sm font-medium text-slate-800 dark:text-slate-200">
-                  URN <span className="text-rose-600">*</span>
-                </label>
-                <input
-                  value={draft.urn}
-                  onChange={(e) => setDraft((d) => ({ ...d, urn: e.target.value }))}
-                  placeholder="Enter URN"
-                  className="h-12 w-full rounded-xl border border-slate-200 bg-white px-4 text-base text-slate-900 outline-none focus:ring-2 focus:ring-primary/30 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:placeholder:text-slate-500 dark:focus:ring-primary/40"
-                />
-              </div>
+          <div className="flex-1 overflow-y-auto pr-2">
+            {!draft ? null : (
+              <div className="grid gap-5 sm:grid-cols-2">
+                <div className="space-y-1">
+                  <label className="text-sm font-medium text-slate-800 dark:text-slate-200">
+                    Organization Name <span className="text-rose-600">*</span>
+                  </label>
+                  <input
+                    value={draft.organizationName}
+                    onChange={(e) =>
+                      setDraft((d) => ({ ...d, organizationName: e.target.value }))
+                    }
+                    placeholder="Green Valley Academy"
+                    className="h-12 w-full rounded-xl border border-slate-200 bg-white px-4 text-base text-slate-900 outline-none focus:ring-2 focus:ring-primary/30 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:placeholder:text-slate-500 dark:focus:ring-primary/40"
+                  />
+                </div>
 
-              <div className="space-y-1">
-                <label className="text-sm font-medium text-slate-800 dark:text-slate-200">
-                  Organization Name <span className="text-rose-600">*</span>
-                </label>
-                <input
-                  value={draft.name}
-                  onChange={(e) => setDraft((d) => ({ ...d, name: e.target.value }))}
-                  placeholder="Enter organization name"
-                  className="h-12 w-full rounded-xl border border-slate-200 bg-white px-4 text-base text-slate-900 outline-none focus:ring-2 focus:ring-primary/30 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:placeholder:text-slate-500 dark:focus:ring-primary/40"
-                />
-              </div>
+                <div className="space-y-1">
+                  <label className="text-sm font-medium text-slate-800 dark:text-slate-200">
+                    Local Authority <span className="text-rose-600">*</span>
+                  </label>
+                  <input
+                    value={draft.localAuthority}
+                    onChange={(e) =>
+                      setDraft((d) => ({
+                        ...d,
+                        localAuthority: e.target.value,
+                      }))
+                    }
+                    placeholder="Camden"
+                    className="h-12 w-full rounded-xl border border-slate-200 bg-white px-4 text-base text-slate-900 outline-none focus:ring-2 focus:ring-primary/30 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:placeholder:text-slate-500 dark:focus:ring-primary/40"
+                  />
+                </div>
 
-              <div className="space-y-1">
-                <label className="text-sm font-medium text-slate-800 dark:text-slate-200">
-                  Local Authority <span className="text-rose-600">*</span>
-                </label>
-                <input
-                  value={draft.localAuthority}
-                  onChange={(e) =>
-                    setDraft((d) => ({ ...d, localAuthority: e.target.value }))
-                  }
-                  placeholder="Enter local authority"
-                  className="h-12 w-full rounded-xl border border-slate-200 bg-white px-4 text-base text-slate-900 outline-none focus:ring-2 focus:ring-primary/30 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:placeholder:text-slate-500 dark:focus:ring-primary/40"
-                />
-              </div>
+                <div className="space-y-1">
+                  <label className="text-sm font-medium text-slate-800 dark:text-slate-200">
+                    Postcode <span className="text-rose-600">*</span>
+                  </label>
+                  <input
+                    value={draft.postcode}
+                    onChange={(e) => setDraft((d) => ({ ...d, postcode: e.target.value }))}
+                    placeholder="NW1 8XW"
+                    className="h-12 w-full rounded-xl border border-slate-200 bg-white px-4 text-base text-slate-900 outline-none focus:ring-2 focus:ring-primary/30 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:placeholder:text-slate-500 dark:focus:ring-primary/40"
+                  />
+                </div>
 
-              <div className="space-y-1">
-                <label className="text-sm font-medium text-slate-800 dark:text-slate-200">
-                  Phase <span className="text-rose-600">*</span>
-                </label>
-                <select
-                  value={draft.phase}
-                  onChange={(e) => setDraft((d) => ({ ...d, phase: e.target.value }))}
-                  className="h-12 w-full cursor-pointer rounded-xl border border-slate-200 bg-white px-4 pr-10 text-base text-slate-900 outline-none focus:ring-2 focus:ring-primary/30 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:focus:ring-primary/40"
-                >
-                  <option value="">Select Phase</option>
-                  {PHASES.map((p) => (
-                    <option key={p} value={p}>
-                      {optionLabel(p)}
-                    </option>
-                  ))}
-                </select>
-              </div>
+                <div className="space-y-1">
+                  <label className="text-sm font-medium text-slate-800 dark:text-slate-200">
+                    URN <span className="text-rose-600">*</span>
+                  </label>
+                  <input
+                    value={draft.urn}
+                    onChange={(e) => setDraft((d) => ({ ...d, urn: e.target.value }))}
+                    placeholder="987654"
+                    className="h-12 w-full rounded-xl border border-slate-200 bg-white px-4 text-base text-slate-900 outline-none focus:ring-2 focus:ring-primary/30 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:placeholder:text-slate-500 dark:focus:ring-primary/40"
+                  />
+                </div>
 
-              <div className="space-y-1">
-                <label className="text-sm font-medium text-slate-800 dark:text-slate-200">
-                  Gender <span className="text-rose-600">*</span>
-                </label>
-                <select
-                  value={draft.gender}
-                  onChange={(e) => setDraft((d) => ({ ...d, gender: e.target.value }))}
-                  className="h-12 w-full cursor-pointer rounded-xl border border-slate-200 bg-white px-4 pr-10 text-base text-slate-900 outline-none focus:ring-2 focus:ring-primary/30 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:focus:ring-primary/40"
-                >
-                  <option value="">Select Gender</option>
-                  {GENDERS.map((g) => (
-                    <option key={g} value={g}>
-                      {optionLabel(g)}
-                    </option>
-                  ))}
-                </select>
-              </div>
+                <div className="space-y-1">
+                  <label className="text-sm font-medium text-slate-800 dark:text-slate-200">
+                    Town <span className="text-rose-600">*</span>
+                  </label>
+                  <input
+                    value={draft.town}
+                    onChange={(e) => setDraft((d) => ({ ...d, town: e.target.value }))}
+                    placeholder="London"
+                    className="h-12 w-full rounded-xl border border-slate-200 bg-white px-4 text-base text-slate-900 outline-none focus:ring-2 focus:ring-primary/30 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:placeholder:text-slate-500 dark:focus:ring-primary/40"
+                  />
+                </div>
 
-              <div className="space-y-1">
-                <label className="text-sm font-medium text-slate-800 dark:text-slate-200">
-                  Telephone <span className="text-rose-600">*</span>
-                </label>
-                <input
-                  value={draft.telephone}
-                  onChange={(e) =>
-                    setDraft((d) => ({ ...d, telephone: e.target.value }))
-                  }
-                  placeholder="Enter telephone"
-                  className="h-12 w-full rounded-xl border border-slate-200 bg-white px-4 text-base text-slate-900 outline-none focus:ring-2 focus:ring-primary/30 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:placeholder:text-slate-500 dark:focus:ring-primary/40"
-                />
-              </div>
+                <div className="space-y-1">
+                  <label className="text-sm font-medium text-slate-800 dark:text-slate-200">
+                    Country <span className="text-rose-600">*</span>
+                  </label>
+                  <input
+                    value={draft.country}
+                    onChange={(e) => setDraft((d) => ({ ...d, country: e.target.value }))}
+                    placeholder="England"
+                    className="h-12 w-full rounded-xl border border-slate-200 bg-white px-4 text-base text-slate-900 outline-none focus:ring-2 focus:ring-primary/30 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:placeholder:text-slate-500 dark:focus:ring-primary/40"
+                  />
+                </div>
 
-              <div className="space-y-1">
-                <label className="text-sm font-medium text-slate-800 dark:text-slate-200">
-                  Street <span className="text-rose-600">*</span>
-                </label>
-                <input
-                  value={draft.street}
-                  onChange={(e) => setDraft((d) => ({ ...d, street: e.target.value }))}
-                  placeholder="Enter street"
-                  className="h-12 w-full rounded-xl border border-slate-200 bg-white px-4 text-base text-slate-900 outline-none focus:ring-2 focus:ring-primary/30 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:placeholder:text-slate-500 dark:focus:ring-primary/40"
-                />
-              </div>
+                <div className="space-y-1">
+                  <label className="text-sm font-medium text-slate-800 dark:text-slate-200">
+                    Phase <span className="text-rose-600">*</span>
+                  </label>
+                  <select
+                    value={draft.phase}
+                    onChange={(e) => setDraft((d) => ({ ...d, phase: e.target.value }))}
+                    className="h-12 w-full cursor-pointer rounded-xl border border-slate-200 bg-white px-4 pr-10 text-base text-slate-900 outline-none focus:ring-2 focus:ring-primary/30 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:focus:ring-primary/40"
+                  >
+                    <option value="">Select Phase</option>
+                    {PHASES.map((p) => (
+                      <option key={p} value={p}>
+                        {optionLabel(p)}
+                      </option>
+                    ))}
+                  </select>
+                </div>
 
-              <div className="space-y-1">
-                <label className="text-sm font-medium text-slate-800 dark:text-slate-200">
-                  Postcode <span className="text-rose-600">*</span>
-                </label>
-                <input
-                  value={draft.postcode}
-                  onChange={(e) =>
-                    setDraft((d) => ({ ...d, postcode: e.target.value }))
-                  }
-                  placeholder="Enter postcode"
-                  className="h-12 w-full rounded-xl border border-slate-200 bg-white px-4 text-base text-slate-900 outline-none focus:ring-2 focus:ring-primary/30 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:placeholder:text-slate-500 dark:focus:ring-primary/40"
-                />
-              </div>
+                <div className="space-y-1">
+                  <label className="text-sm font-medium text-slate-800 dark:text-slate-200">
+                    Gender <span className="text-rose-600">*</span>
+                  </label>
+                  <select
+                    value={draft.gender}
+                    onChange={(e) => setDraft((d) => ({ ...d, gender: e.target.value }))}
+                    className="h-12 w-full cursor-pointer rounded-xl border border-slate-200 bg-white px-4 pr-10 text-base text-slate-900 outline-none focus:ring-2 focus:ring-primary/30 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:focus:ring-primary/40"
+                  >
+                    <option value="">Select Gender</option>
+                    {GENDERS.map((g) => (
+                      <option key={g} value={g}>
+                        {optionLabel(g)}
+                      </option>
+                    ))}
+                  </select>
+                </div>
 
-              <div className="space-y-1">
-                <label className="text-sm font-medium text-slate-800 dark:text-slate-200">
-                  Address Line 1
-                </label>
-                <input
-                  value={draft.addressLine1}
-                  onChange={(e) =>
-                    setDraft((d) => ({ ...d, addressLine1: e.target.value }))
-                  }
-                  placeholder="Enter address line 1"
-                  className="h-12 w-full rounded-xl border border-slate-200 bg-white px-4 text-base text-slate-900 outline-none focus:ring-2 focus:ring-primary/30 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:placeholder:text-slate-500 dark:focus:ring-primary/40"
-                />
-              </div>
+                <div className="space-y-1">
+                  <label className="text-sm font-medium text-slate-800 dark:text-slate-200">
+                    Street <span className="text-rose-600">*</span>
+                  </label>
+                  <input
+                    value={draft.street}
+                    onChange={(e) => setDraft((d) => ({ ...d, street: e.target.value }))}
+                    placeholder="Green Road"
+                    className="h-12 w-full rounded-xl border border-slate-200 bg-white px-4 text-base text-slate-900 outline-none focus:ring-2 focus:ring-primary/30 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:placeholder:text-slate-500 dark:focus:ring-primary/40"
+                  />
+                </div>
 
-              <div className="space-y-1">
-                <label className="text-sm font-medium text-slate-800 dark:text-slate-200">
-                  Address Line 2
-                </label>
-                <input
-                  value={draft.addressLine2}
-                  onChange={(e) =>
-                    setDraft((d) => ({ ...d, addressLine2: e.target.value }))
-                  }
-                  placeholder="Enter address line 2"
-                  className="h-12 w-full rounded-xl border border-slate-200 bg-white px-4 text-base text-slate-900 outline-none focus:ring-2 focus:ring-primary/30 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:placeholder:text-slate-500 dark:focus:ring-primary/40"
-                />
-              </div>
+                <div className="space-y-1">
+                  <label className="text-sm font-medium text-slate-800 dark:text-slate-200">
+                    Address Line 1 <span className="text-rose-600">*</span>
+                  </label>
+                  <input
+                    value={draft.addressLine1}
+                    onChange={(e) =>
+                      setDraft((d) => ({ ...d, addressLine1: e.target.value }))
+                    }
+                    placeholder="Camden Town"
+                    className="h-12 w-full rounded-xl border border-slate-200 bg-white px-4 text-base text-slate-900 outline-none focus:ring-2 focus:ring-primary/30 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:placeholder:text-slate-500 dark:focus:ring-primary/40"
+                  />
+                </div>
 
-              <div className="space-y-1">
-                <label className="text-sm font-medium text-slate-800 dark:text-slate-200">
-                  Town <span className="text-rose-600">*</span>
-                </label>
-                <input
-                  value={draft.town}
-                  onChange={(e) => setDraft((d) => ({ ...d, town: e.target.value }))}
-                  placeholder="Enter town"
-                  className="h-12 w-full rounded-xl border border-slate-200 bg-white px-4 text-base text-slate-900 outline-none focus:ring-2 focus:ring-primary/30 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:placeholder:text-slate-500 dark:focus:ring-primary/40"
-                />
-              </div>
+                <div className="space-y-1">
+                  <label className="text-sm font-medium text-slate-800 dark:text-slate-200">
+                    Telephone <span className="text-rose-600">*</span>
+                  </label>
+                  <input
+                    value={draft.telephoneNumber}
+                    onChange={(e) =>
+                      setDraft((d) => ({ ...d, telephoneNumber: e.target.value }))
+                    }
+                    placeholder="02079460123"
+                    className="h-12 w-full rounded-xl border border-slate-200 bg-white px-4 text-base text-slate-900 outline-none focus:ring-2 focus:ring-primary/30 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:placeholder:text-slate-500 dark:focus:ring-primary/40"
+                  />
+                </div>
 
-              <div className="space-y-1">
-                <label className="text-sm font-medium text-slate-800 dark:text-slate-200">
-                  County
-                </label>
-                <input
-                  value={draft.county}
-                  onChange={(e) => setDraft((d) => ({ ...d, county: e.target.value }))}
-                  placeholder="Enter county"
-                  className="h-12 w-full rounded-xl border border-slate-200 bg-white px-4 text-base text-slate-900 outline-none focus:ring-2 focus:ring-primary/30 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:placeholder:text-slate-500 dark:focus:ring-primary/40"
-                />
-              </div>
-            </div>
-          )}
+                <div className="space-y-1">
+                  <label className="text-sm font-medium text-slate-800 dark:text-slate-200">
+                    Latitude <span className="text-rose-600">*</span>
+                  </label>
+                  <input
+                    value={draft.latitude}
+                    onChange={(e) => setDraft((d) => ({ ...d, latitude: e.target.value }))}
+                    placeholder="51.539"
+                    inputMode="decimal"
+                    className="h-12 w-full rounded-xl border border-slate-200 bg-white px-4 text-base text-slate-900 outline-none focus:ring-2 focus:ring-primary/30 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:placeholder:text-slate-500 dark:focus:ring-primary/40"
+                  />
+                </div>
 
-          <DialogFooter className="flex flex-wrap justify-between gap-2 sm:gap-3">
+                <div className="space-y-1">
+                  <label className="text-sm font-medium text-slate-800 dark:text-slate-200">
+                    Longitude <span className="text-rose-600">*</span>
+                  </label>
+                  <input
+                    value={draft.longitude}
+                    onChange={(e) =>
+                      setDraft((d) => ({ ...d, longitude: e.target.value }))
+                    }
+                    placeholder="-0.142"
+                    inputMode="decimal"
+                    className="h-12 w-full rounded-xl border border-slate-200 bg-white px-4 text-base text-slate-900 outline-none focus:ring-2 focus:ring-primary/30 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:placeholder:text-slate-500 dark:focus:ring-primary/40"
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+
+          <DialogFooter className="mt-4 flex flex-wrap justify-between gap-2 border-t border-slate-200 pt-4 sm:gap-3 dark:border-slate-800">
             <button
               type="button"
               onClick={saveDraft}
@@ -905,6 +1085,52 @@ export default function OrganizationsPage() {
               className="inline-flex cursor-pointer items-center justify-center rounded-xl border border-slate-200 bg-slate-50 px-6 py-3 text-base font-semibold text-slate-900 transition-colors hover:bg-slate-100 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800"
             >
               Cancel
+            </button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={!!deleteTarget}
+        onOpenChange={(open) => {
+          if (!open) closeDeleteModal();
+        }}
+      >
+        <DialogContent
+          className="sm:max-w-md"
+          showCloseButton={!deleteSubmitting}
+        >
+          <DialogHeader>
+            <DialogTitle className="text-xl text-slate-900 dark:text-slate-100">
+              Delete organization
+            </DialogTitle>
+          </DialogHeader>
+
+          <p className="text-sm leading-relaxed text-slate-600 dark:text-slate-400">
+            Are you sure you want to delete{" "}
+            <span className="font-semibold text-slate-900 dark:text-slate-100">
+              {deleteTarget?.name}
+            </span>
+            ? This cannot be undone.
+          </p>
+
+          <DialogFooter className="mt-2 flex flex-wrap gap-2 sm:justify-end">
+            <button
+              type="button"
+              disabled={deleteSubmitting}
+              onClick={closeDeleteModal}
+              className="inline-flex cursor-pointer items-center justify-center rounded-xl border border-slate-200 bg-slate-50 px-5 py-2.5 text-sm font-semibold text-slate-900 transition-colors hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-55 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              disabled={deleteSubmitting}
+              onClick={confirmDeleteOrganization}
+              className="inline-flex cursor-pointer items-center justify-center gap-2 rounded-xl bg-rose-600 px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-rose-700 disabled:cursor-not-allowed disabled:opacity-55 dark:bg-rose-600 dark:hover:bg-rose-500"
+            >
+              <Trash2 size={16} />
+              Delete
             </button>
           </DialogFooter>
         </DialogContent>

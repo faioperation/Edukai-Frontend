@@ -1,7 +1,8 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import toast from "react-hot-toast";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   BriefcaseBusiness,
   Building2,
@@ -23,6 +24,11 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 
+import { apiDelete, apiGet, apiPatch, apiPost } from "@/lib/api";
+
+const DEFAULT_LIMIT = 200;
+const ORG_PICKER_LIMIT = 500;
+
 const PHASES = [
   "not_applicable",
   "nursery",
@@ -34,74 +40,123 @@ const PHASES = [
 
 const GENDERS = ["boys", "girls", "mixed"];
 
-const orgOptions = [
-  { name: "Kingsley Academy", localAuthority: "Hounslow", town: "Hounslow", phase: "secondary", gender: "mixed" },
-  { name: "Barnhill Community High School", localAuthority: "Hillingdon", town: "Hayes", phase: "secondary", gender: "mixed" },
-  { name: "Highgate Wood Secondary School", localAuthority: "Haringey", town: "London", phase: "secondary", gender: "mixed" },
-  { name: "Gladesmore Community School", localAuthority: "Haringey", town: "London", phase: "secondary", gender: "mixed" },
-  { name: "Leytonstone School", localAuthority: "Waltham Forest", town: "London", phase: "secondary", gender: "mixed" },
-  { name: "Queen Elizabeth's Girls' School", localAuthority: "Barnet", town: "Barnet", phase: "secondary", gender: "girls" },
-  { name: "Ashmole Academy", localAuthority: "Barnet", town: "Barnet", phase: "secondary", gender: "mixed" },
-  { name: "Cheam High School", localAuthority: "Sutton", town: "Sutton", phase: "secondary", gender: "mixed" },
-];
+function normalizePhase(v) {
+  const s = String(v || "").trim().toLowerCase();
+  if (!s) return "";
+  return s.replace(/\s+/g, "_");
+}
 
-const seed = [
-  {
-    id: "c_1",
-    organizationName: "Kingsley Academy",
-    localAuthority: "Hounslow",
-    contactPerson: "Abdi",
-    workEmail: "aabdi@kingsleyacademy.org",
-    jobTitle: "English & film studies LP",
-    phase: "secondary",
-    town: "Hounslow",
-    gender: "mixed",
-  },
-  {
-    id: "c_2",
-    organizationName: "Barnhill Community High School",
-    localAuthority: "Hillingdon",
-    contactPerson: "Abunsair",
-    workEmail: "aabunsair@barnhill.school",
-    jobTitle: "Assistant Head of Maths",
-    phase: "secondary",
-    town: "Hayes",
-    gender: "mixed",
-  },
-  {
-    id: "c_3",
-    organizationName: "Highgate Wood Secondary School",
-    localAuthority: "Haringey",
-    contactPerson: "Ahmet",
-    workEmail: "aah@hws.haringey.sch.uk",
-    jobTitle: "HOD Media",
-    phase: "secondary",
-    town: "London",
-    gender: "mixed",
-  },
-  {
-    id: "c_4",
-    organizationName: "Gladesmore Community School",
-    localAuthority: "Haringey",
-    contactPerson: "Aibangbee",
-    workEmail: "aae@gladesmore.com",
-    jobTitle: "Deputy Head",
-    phase: "secondary",
-    town: "London",
-    gender: "mixed",
-  },
-  {
-    id: "c_5",
-    organizationName: "Leytonstone School",
-    localAuthority: "Waltham Forest",
-    contactPerson: "Ajab",
-    workEmail: "atif.ajab@leytonstone.waltham.sch.uk",
-    jobTitle: "Senior Assistant Headteacher",
-    phase: "secondary",
-    town: "London",
-    gender: "mixed",
-  },
-];
+function normalizeGender(v) {
+  const s = String(v || "").trim().toLowerCase();
+  if (!s) return "";
+  if (s === "male" || s === "m") return "boys";
+  if (s === "female" || s === "f") return "girls";
+  return s;
+}
+
+function pickOrganizationFkId(d) {
+  const raw = d || {};
+  // Same source as Organizations page (`mapImportOrgToRow`): row `id` is the org UUID
+  // used for PATCH /organizations/:id. Prefer it over `organizationId`, which may be a
+  // different FK on import rows and breaks contacts.organizationId references.
+  const candidates = [
+    raw.id,
+    raw.organizationId,
+    raw.OrganizationId,
+    raw.organization_id,
+    raw.uuid,
+    raw.UUID,
+    raw._id,
+  ];
+  for (const c of candidates) {
+    const s = String(c ?? "").trim();
+    if (s) return s;
+  }
+  return "";
+}
+
+function mapOrgPickerRow(item) {
+  const d = item || {};
+  const id = pickOrganizationFkId(d);
+  const nameRaw =
+    String(d.OrganizationName ?? d.name ?? "").trim() ||
+    String(d.URN ?? d.urn ?? "").trim();
+  return {
+    id: String(id || "").trim(),
+    name: nameRaw || "Unnamed organization",
+  };
+}
+
+function mapImportContactToRow(item) {
+  const d = item || {};
+  const payload = d.payload && typeof d.payload === "object" ? d.payload : null;
+  const orgDetails = d.organizationDetails || {};
+
+  return {
+    id: d.id,
+    organizationId: d.organizationId ?? d.OrganizationId ?? "",
+    organizationName:
+      d.OrganizationName ??
+      d.organizationName ??
+      d.organization ??
+      orgDetails?.OrganizationName ??
+      payload?.OrganizationName ??
+      "",
+    localAuthority:
+      d.LocalAuthority ??
+      d.localAuthority ??
+      orgDetails?.LocalAuthority ??
+      orgDetails?.district ??
+      "",
+    contactPerson:
+      d.FullName ??
+      d.fullName ??
+      d.ContactPersonName ??
+      d.contactPersonName ??
+      d.ContactPerson ??
+      d.contactPerson ??
+      d.name ??
+      "",
+    workEmail:
+      d.WorkEmail ?? d.workEmail ?? d.email ?? payload?.WorkEmail ?? "",
+    workPhone: String(
+      d.WorkPhone ?? d.workPhone ?? d.phone ?? payload?.WorkPhone ?? ""
+    ),
+    jobTitle: d.JobTitle ?? d.jobTitle ?? payload?.JobTitle ?? "",
+    department: d.Department ?? d.department ?? payload?.Department ?? "",
+    phase: normalizePhase(d.Phase ?? d.phase ?? orgDetails?.Phase ?? orgDetails?.phase ?? payload?.Phase),
+    town: d.Town ?? d.town ?? orgDetails?.Town ?? orgDetails?.town ?? "",
+    gender: normalizeGender(d.Gender ?? d.gender ?? orgDetails?.Gender ?? orgDetails?.gender ?? payload?.Gender),
+    rawGender: d.Gender ?? d.gender ?? orgDetails?.Gender ?? orgDetails?.gender ?? payload?.Gender ?? "",
+    createdAt: d.createdAt ?? null,
+  };
+}
+
+function isExcelFile(file) {
+  const name = String(file?.name || "").toLowerCase();
+  const okExt = name.endsWith(".xlsx") || name.endsWith(".xls");
+  const mime = String(file?.type || "").toLowerCase();
+  const okMime =
+    !mime ||
+    mime.includes("spreadsheet") ||
+    mime.includes("excel") ||
+    mime.includes("officedocument");
+  return okExt && okMime;
+}
+
+const CONTACT_GENDER_API = ["Male", "Female", "Mixed"];
+
+function genderApiFromRow(row) {
+  const raw = String(row?.rawGender || "").trim();
+  const rl = raw.toLowerCase();
+  if (rl === "male" || rl === "m") return "Male";
+  if (rl === "female" || rl === "f") return "Female";
+  if (rl === "mixed") return "Mixed";
+  const g = normalizeGender(row?.gender);
+  if (g === "boys") return "Male";
+  if (g === "girls") return "Female";
+  return "Mixed";
+}
 
 function initials(name) {
   const parts = String(name || "").trim().split(/\s+/).filter(Boolean);
@@ -117,17 +172,123 @@ function optionLabel(x) {
 
 export default function ContactPage() {
   const fileInputRef = useRef(null);
-  const [rows, setRows] = useState(seed);
+  const queryClient = useQueryClient();
   const [q, setQ] = useState("");
   const [job, setJob] = useState("all");
   const [phase, setPhase] = useState("all");
   const [town, setTown] = useState("all");
   const [gender, setGender] = useState("all");
   const [localAuthority, setLocalAuthority] = useState("all");
+  const [page, setPage] = useState(1);
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [dialogMode, setDialogMode] = useState("add"); // add | edit
   const [draft, setDraft] = useState(null);
+
+  const [deleteTarget, setDeleteTarget] = useState(null);
+  const [deleteSubmitting, setDeleteSubmitting] = useState(false);
+
+  const importOrgFiltersQuery = useQuery({
+    queryKey: ["import-organization", "filters"],
+    queryFn: async () => {
+      const res = await apiGet("/import-organization/filters");
+      if (res?.success === false)
+        throw new Error(res?.message || "Failed to load organization filters");
+      return res;
+    },
+    staleTime: 60_000,
+  });
+
+  const organizationsPickerQuery = useQuery({
+    queryKey: ["import-organization", "all", "picker", ORG_PICKER_LIMIT],
+    enabled: dialogOpen,
+    queryFn: async () => {
+      const res = await apiGet("/import-organization/all", {
+        params: { limit: ORG_PICKER_LIMIT, page: 1 },
+      });
+      if (res?.success === false)
+        throw new Error(res?.message || "Failed to load organizations");
+
+      const payload = res || {};
+      const items = Array.isArray(payload?.data)
+        ? payload.data
+        : Array.isArray(payload?.items)
+          ? payload.items
+          : [];
+
+      return items.map(mapOrgPickerRow).filter((o) => o.id);
+    },
+    staleTime: 60_000,
+  });
+
+  const orgSelectOptions = useMemo(() => {
+    const rows = [...(organizationsPickerQuery.data ?? [])];
+    rows.sort((a, b) => a.name.localeCompare(b.name));
+    if (
+      dialogMode === "edit" &&
+      draft?.organizationId &&
+      !rows.some((o) => o.id === draft.organizationId)
+    ) {
+      rows.unshift({
+        id: draft.organizationId,
+        name:
+          String(draft.organizationName || "").trim() ||
+          draft.organizationId,
+      });
+    }
+    return rows;
+  }, [
+    organizationsPickerQuery.data,
+    dialogMode,
+    draft?.organizationId,
+    draft?.organizationName,
+  ]);
+
+  const importContactsQuery = useQuery({
+    queryKey: ["import-contact", "all", { q, job, phase, town, gender, localAuthority, page }],
+    queryFn: async () => {
+      const params = {
+        searchTerm: q?.trim() ? q.trim() : undefined,
+        jobTitle: job === "all" ? undefined : job,
+        phase: phase === "all" ? undefined : optionLabel(phase),
+        town: town === "all" ? undefined : town,
+        gender: gender === "all" ? undefined : optionLabel(gender),
+        localAuthority: localAuthority === "all" ? undefined : localAuthority,
+        limit: DEFAULT_LIMIT,
+        page,
+      };
+      const res = await apiGet("/import-contact/all", { params });
+      if (res?.success === false)
+        throw new Error(res?.message || "Failed to load imported contacts");
+
+      const payload = res || {};
+      const items = Array.isArray(payload?.data)
+        ? payload.data
+        : Array.isArray(payload?.items)
+          ? payload.items
+          : [];
+      const meta = payload?.meta || {};
+      return {
+        items: items.map(mapImportContactToRow),
+        meta: {
+          page: Number(meta.page || page || 1),
+          limit: Number(meta.limit || DEFAULT_LIMIT),
+          total: Number(meta.total || items.length || 0),
+          totalPage: Number(meta.totalPage || 1),
+        },
+      };
+    },
+    staleTime: 10_000,
+    keepPreviousData: true,
+  });
+
+  const rows = importContactsQuery.data?.items || [];
+  const meta = importContactsQuery.data?.meta || {
+    page,
+    limit: DEFAULT_LIMIT,
+    total: rows.length,
+    totalPage: 1,
+  };
 
   const jobs = useMemo(() => {
     const set = new Set(rows.map((r) => r.jobTitle).filter(Boolean));
@@ -143,6 +304,35 @@ export default function ContactPage() {
     const set = new Set(rows.map((r) => r.localAuthority).filter(Boolean));
     return Array.from(set).sort((a, b) => a.localeCompare(b));
   }, [rows]);
+
+  const filterOptions = useMemo(() => {
+    const payload = importOrgFiltersQuery.data || {};
+    const d = payload?.data || payload?.filters || payload || {};
+
+    const from = (...keys) => {
+      for (const k of keys) {
+        const v = d?.[k];
+        if (Array.isArray(v)) return v.filter(Boolean);
+      }
+      return null;
+    };
+
+    const phasesFromApi = from("phases", "phase", "phaseList");
+    const gendersFromApi = from("genders", "gender", "genderList");
+    const lasFromApi = from(
+      "localAuthorities",
+      "local_authorities",
+      "localAuthority",
+      "local_authority",
+      "authorities"
+    );
+
+    return {
+      phases: (phasesFromApi?.length ? phasesFromApi : PHASES).map((x) => normalizePhase(x)),
+      genders: (gendersFromApi?.length ? gendersFromApi : GENDERS).map((x) => normalizeGender(x)),
+      localAuthorities: (lasFromApi?.length ? lasFromApi : authorities).map((x) => String(x)),
+    };
+  }, [authorities, importOrgFiltersQuery.data]);
 
   const filtered = useMemo(() => {
     const query = q.trim().toLowerCase();
@@ -161,25 +351,39 @@ export default function ContactPage() {
     });
   }, [gender, job, localAuthority, phase, q, rows, town]);
 
+  useEffect(() => {
+    setPage(1);
+  }, [q, job, phase, town, gender, localAuthority]);
+
   function openAdd() {
     setDialogMode("add");
     setDraft({
-      id: "",
+      rowId: "",
+      organizationId: "",
       organizationName: "",
-      localAuthority: "",
       contactPerson: "",
       workEmail: "",
+      workPhone: "",
       jobTitle: "",
-      phase: "",
-      town: "",
-      gender: "",
+      department: "",
+      genderApi: "Male",
     });
     setDialogOpen(true);
   }
 
   function openEdit(row) {
     setDialogMode("edit");
-    setDraft({ ...row });
+    setDraft({
+      rowId: row.id,
+      organizationId: row.organizationId || "",
+      organizationName: row.organizationName || "",
+      contactPerson: row.contactPerson || "",
+      workEmail: row.workEmail || "",
+      workPhone: row.workPhone || "",
+      jobTitle: row.jobTitle || "",
+      department: row.department || "",
+      genderApi: genderApiFromRow(row),
+    });
     setDialogOpen(true);
   }
 
@@ -188,59 +392,112 @@ export default function ContactPage() {
     setDraft(null);
   }
 
+  function selectOrganization(orgId) {
+    const organizationId = String(orgId || "").trim();
+    setDraft((d) => {
+      const picked =
+        orgSelectOptions.find((o) => o.id === organizationId) ||
+        (organizationId && organizationId === d.organizationId
+          ? { id: organizationId, name: d.organizationName || organizationId }
+          : null);
+      return {
+        ...d,
+        organizationId,
+        organizationName: picked?.name ?? "",
+      };
+    });
+  }
+
   function validateDraft(d) {
     const required = [
-      ["organizationName", "Organization name"],
-      ["contactPerson", "Contact person"],
+      ["organizationId", "Organization"],
+      ["contactPerson", "Full name"],
       ["workEmail", "Work email"],
+      ["workPhone", "Work phone"],
       ["jobTitle", "Job title"],
+      ["department", "Department"],
+      ["genderApi", "Gender"],
     ];
     for (const [key, label] of required) {
-      if (!String(d?.[key] || "").trim()) return `${label} is required`;
+      if (!String(d?.[key] ?? "").trim()) return `${label} is required`;
     }
     return null;
   }
 
-  function onOrgChange(value) {
-    const match = orgOptions.find((o) => o.name === value);
-    setDraft((d) => ({
-      ...d,
-      organizationName: value,
-      localAuthority: match ? match.localAuthority : d.localAuthority,
-      town: match ? match.town : d.town,
-      phase: match ? match.phase : d.phase,
-      gender: match ? match.gender : d.gender,
-    }));
+  function buildContactBody(d) {
+    return {
+      organizationId: String(d?.organizationId || "").trim(),
+      fullName: String(d?.contactPerson || "").trim(),
+      workEmail: String(d?.workEmail || "").trim(),
+      workPhone: String(d?.workPhone || "").trim(),
+      jobTitle: String(d?.jobTitle || "").trim(),
+      department: String(d?.department || "").trim(),
+      gender: String(d?.genderApi || "").trim(),
+    };
   }
 
-  function saveDraft() {
+  async function saveDraft() {
     const err = validateDraft(draft);
     if (err) return toast.error(err);
 
-    if (dialogMode === "add") {
-      const match = orgOptions.find((o) => o.name === draft.organizationName);
-      const newRow = {
-        ...draft,
-        id: `c_${Date.now()}`,
-        localAuthority: match ? match.localAuthority : draft.localAuthority,
-        town: match ? match.town : draft.town,
-        phase: match ? match.phase : draft.phase,
-        gender: match ? match.gender : draft.gender,
-      };
-      setRows((prev) => [newRow, ...prev]);
-      toast.success("Contact added");
-      closeDialog();
-      return;
-    }
+    const mode = dialogMode;
+    const body = buildContactBody(draft);
+    const loadingId = toast.loading(
+      mode === "add" ? "Creating contact…" : "Updating contact…"
+    );
 
-    setRows((prev) => prev.map((r) => (r.id === draft.id ? draft : r)));
-    toast.success("Contact updated");
-    closeDialog();
+    try {
+      let res;
+      if (mode === "add") {
+        res = await apiPost("/contacts/create-contact", body);
+      } else {
+        const id = String(draft?.rowId ?? "").trim();
+        if (!id) throw new Error("Missing contact id");
+        res = await apiPatch(`/contacts/${encodeURIComponent(id)}`, body);
+      }
+      if (res?.success === false) throw new Error(res?.message || "Request failed");
+
+      toast.success(res?.message || "Saved successfully", { id: loadingId });
+      closeDialog();
+      if (mode === "add") setPage(1);
+      queryClient.invalidateQueries({ queryKey: ["import-contact", "all"] });
+    } catch (e) {
+      toast.error(e?.message || "Request failed", { id: loadingId });
+    }
   }
 
-  function onDelete(id) {
-    setRows((prev) => prev.filter((r) => r.id !== id));
-    toast.success("Contact deleted");
+  function openDeleteModal(row) {
+    const cid = String(row?.id ?? "").trim();
+    if (!cid) return toast.error("Missing contact id");
+    setDeleteTarget({
+      id: cid,
+      name: String(row?.contactPerson || "").trim() || "this contact",
+    });
+  }
+
+  function closeDeleteModal() {
+    if (deleteSubmitting) return;
+    setDeleteTarget(null);
+  }
+
+  async function confirmDeleteContact() {
+    if (!deleteTarget?.id) return;
+
+    setDeleteSubmitting(true);
+    const loadingId = toast.loading("Deleting contact…");
+
+    try {
+      const res = await apiDelete(`/import-contact/${encodeURIComponent(deleteTarget.id)}`);
+      if (res && res.success === false) throw new Error(res.message || "Delete failed");
+
+      toast.success((res && res.message) || "Contact deleted", { id: loadingId });
+      setDeleteTarget(null);
+      queryClient.invalidateQueries({ queryKey: ["import-contact", "all"] });
+    } catch (e) {
+      toast.error(e?.message || "Delete failed", { id: loadingId });
+    } finally {
+      setDeleteSubmitting(false);
+    }
   }
 
   function triggerImport() {
@@ -250,8 +507,29 @@ export default function ContactPage() {
   function onImportFile(e) {
     const file = e.target.files?.[0];
     if (!file) return;
-    toast.success(`Selected: ${file.name}`);
-    e.target.value = "";
+    if (!isExcelFile(file)) {
+      toast.error("Please upload a valid Excel file (.xlsx or .xls)");
+      e.target.value = "";
+      return;
+    }
+
+    const loadingId = toast.loading("Importing Excel…");
+    (async () => {
+      try {
+        const fd = new FormData();
+        fd.append("files", file);
+        const res = await apiPost("/import-contact/upload", fd);
+        if (res?.success === false) throw new Error(res?.message || "Import failed");
+
+        toast.success(res?.message || "Imported successfully", { id: loadingId });
+        setPage(1);
+        queryClient.invalidateQueries({ queryKey: ["import-contact", "all"] });
+      } catch (err) {
+        toast.error(err?.message || "Import failed", { id: loadingId });
+      } finally {
+        e.target.value = "";
+      }
+    })();
   }
 
   return (
@@ -272,7 +550,7 @@ export default function ContactPage() {
               Total contacts
             </span>
             <span className="ml-2 mt-1 text-base font-semibold text-primary dark:text-primary">
-              {rows.length}
+              {meta.total ?? rows.length}
             </span>
           </div>
 
@@ -340,7 +618,7 @@ export default function ContactPage() {
             className="h-12 w-full cursor-pointer rounded-xl border border-slate-200 bg-white px-4 pr-10 text-base text-slate-900 outline-none focus:ring-2 focus:ring-primary/30 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:focus:ring-primary/40"
           >
             <option value="all">All Phases</option>
-            {PHASES.map((p) => (
+            {filterOptions.phases.map((p) => (
               <option key={p} value={p}>
                 {optionLabel(p)}
               </option>
@@ -366,7 +644,7 @@ export default function ContactPage() {
             className="h-12 w-full cursor-pointer rounded-xl border border-slate-200 bg-white px-4 pr-10 text-base text-slate-900 outline-none focus:ring-2 focus:ring-primary/30 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:focus:ring-primary/40"
           >
             <option value="all">All Genders</option>
-            {GENDERS.map((g) => (
+            {filterOptions.genders.map((g) => (
               <option key={g} value={g}>
                 {optionLabel(g)}
               </option>
@@ -379,7 +657,7 @@ export default function ContactPage() {
             className="h-12 w-full cursor-pointer rounded-xl border border-slate-200 bg-white px-4 pr-10 text-base text-slate-900 outline-none focus:ring-2 focus:ring-primary/30 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:focus:ring-primary/40"
           >
             <option value="all">All Local Authority</option>
-            {authorities.map((a) => (
+            {filterOptions.localAuthorities.map((a) => (
               <option key={a} value={a}>
                 {a}
               </option>
@@ -397,10 +675,31 @@ export default function ContactPage() {
                 <th className="px-5 py-4">CONTACT PERSON & MAIL</th>
                 <th className="px-5 py-4">JOB TITLE</th>
                 <th className="px-5 py-4">ORGANIZATION & LOCAL AUTHORITY</th>
+                <th className="px-5 py-4">PHASE</th>
+                <th className="px-5 py-4">TOWN</th>
                 <th className="px-5 py-4 text-right">ACTIONS</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
+              {importContactsQuery.isLoading ? (
+                <tr>
+                  <td
+                    colSpan={6}
+                    className="px-5 py-10 text-center text-sm text-slate-600 dark:text-slate-400"
+                  >
+                    Loading contacts…
+                  </td>
+                </tr>
+              ) : importContactsQuery.isError ? (
+                <tr>
+                  <td
+                    colSpan={6}
+                    className="px-5 py-10 text-center text-sm text-rose-700 dark:text-rose-300"
+                  >
+                    {importContactsQuery.error?.message || "Failed to load contacts"}
+                  </td>
+                </tr>
+              ) : null}
               {filtered.map((row) => (
                 <tr key={row.id} className="hover:bg-slate-100/70 dark:hover:bg-slate-900/40">
                   <td className="px-5 py-4">
@@ -440,6 +739,16 @@ export default function ContactPage() {
                     </div>
                   </td>
                   <td className="px-5 py-4">
+                    <div className="text-sm font-medium text-slate-700 dark:text-slate-300">
+                      {optionLabel(row.phase) || "—"}
+                    </div>
+                  </td>
+                  <td className="px-5 py-4">
+                    <div className="text-sm font-medium text-slate-700 dark:text-slate-300">
+                      {row.town || "—"}
+                    </div>
+                  </td>
+                  <td className="px-5 py-4">
                     <div className="flex items-center justify-end gap-2">
                       <button
                         type="button"
@@ -451,7 +760,7 @@ export default function ContactPage() {
                       </button>
                       <button
                         type="button"
-                        onClick={() => onDelete(row.id)}
+                        onClick={() => openDeleteModal(row)}
                         className="inline-flex cursor-pointer items-center justify-center rounded-xl border border-rose-200 bg-rose-50 p-2.5 text-rose-700 transition-colors hover:bg-rose-100 dark:border-rose-900/40 dark:bg-rose-950/25 dark:text-rose-200 dark:hover:bg-rose-950/40"
                         aria-label={`Delete ${row.contactPerson}`}
                       >
@@ -463,13 +772,44 @@ export default function ContactPage() {
               ))}
               {!filtered.length ? (
                 <tr>
-                  <td colSpan={4} className="px-5 py-10 text-center text-sm text-slate-600 dark:text-slate-400">
+                  <td colSpan={6} className="px-5 py-10 text-center text-sm text-slate-600 dark:text-slate-400">
                     No contacts found. Try a different search.
                   </td>
                 </tr>
               ) : null}
             </tbody>
           </table>
+        </div>
+      </div>
+
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div className="text-sm text-slate-600 dark:text-slate-400">
+          Page{" "}
+          <span className="font-semibold text-slate-900 dark:text-slate-100">
+            {meta.page}
+          </span>{" "}
+          of{" "}
+          <span className="font-semibold text-slate-900 dark:text-slate-100">
+            {meta.totalPage}
+          </span>
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            disabled={meta.page <= 1 || importContactsQuery.isFetching}
+            onClick={() => setPage((p) => Math.max(1, p - 1))}
+            className="inline-flex h-10 items-center justify-center rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-800 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-55 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:hover:bg-slate-900"
+          >
+            Prev
+          </button>
+          <button
+            type="button"
+            disabled={meta.page >= meta.totalPage || importContactsQuery.isFetching}
+            onClick={() => setPage((p) => Math.min(meta.totalPage || 1, p + 1))}
+            className="inline-flex h-10 items-center justify-center rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-800 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-55 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:hover:bg-slate-900"
+          >
+            Next
+          </button>
         </div>
       </div>
 
@@ -507,7 +847,7 @@ export default function ContactPage() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => onDelete(row.id)}
+                  onClick={() => openDeleteModal(row)}
                   className="inline-flex cursor-pointer items-center justify-center rounded-xl border border-rose-200 bg-rose-50 p-2.5 text-rose-700 transition-colors hover:bg-rose-100 dark:border-rose-900/40 dark:bg-rose-950/25 dark:text-rose-200 dark:hover:bg-rose-950/40"
                   aria-label={`Delete ${row.contactPerson}`}
                 >
@@ -558,66 +898,133 @@ export default function ContactPage() {
           </DialogHeader>
 
           {!draft ? null : (
-            <div className="space-y-5">
-              <div className="space-y-1">
+            <div className="grid gap-5 sm:grid-cols-2">
+              <div className="space-y-1 sm:col-span-2">
                 <label className="text-sm font-medium text-slate-800 dark:text-slate-200">
-                  Organization Name<span className="text-rose-600">*</span>
+                  Organization <span className="text-rose-600">*</span>
                 </label>
-                <div className="relative">
-                  <input
-                    value={draft.organizationName}
-                    onChange={(e) => onOrgChange(e.target.value)}
-                    placeholder="Search organization..."
-                    list="org-options"
-                    className="h-12 w-full rounded-xl border border-slate-200 bg-white px-4 pr-12 text-base text-slate-900 outline-none focus:ring-2 focus:ring-primary/30 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:placeholder:text-slate-500 dark:focus:ring-primary/40"
-                  />
-                  <div className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 dark:text-slate-500">
-                    ▾
-                  </div>
-                  <datalist id="org-options">
-                    {orgOptions.map((o) => (
-                      <option key={o.name} value={o.name} />
-                    ))}
-                  </datalist>
-                </div>
+                <select
+                  value={draft.organizationId}
+                  disabled={
+                    organizationsPickerQuery.isLoading ||
+                    organizationsPickerQuery.isError
+                  }
+                  onChange={(e) => selectOrganization(e.target.value)}
+                  className="h-12 w-full cursor-pointer rounded-xl border border-slate-200 bg-white px-4 pr-10 text-base text-slate-900 outline-none focus:ring-2 focus:ring-primary/30 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:opacity-70 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:focus:ring-primary/40 dark:disabled:bg-slate-900/40"
+                >
+                  <option value="">
+                    {organizationsPickerQuery.isLoading
+                      ? "Loading organizations…"
+                      : "Select organization…"}
+                  </option>
+                  {orgSelectOptions.map((o) => (
+                    <option key={o.id} value={o.id}>
+                      {o.name}
+                    </option>
+                  ))}
+                </select>
+                {organizationsPickerQuery.isError ? (
+                  <p className="text-xs text-rose-600 dark:text-rose-400">
+                    {organizationsPickerQuery.error?.message ||
+                      "Could not load organizations"}
+                  </p>
+                ) : draft.organizationId ? (
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    Selected organization ID:{" "}
+                    <span className="font-mono text-slate-700 dark:text-slate-300">
+                      {draft.organizationId}
+                    </span>
+                  </p>
+                ) : null}
               </div>
 
-              <div className="space-y-1">
+              <div className="space-y-1 sm:col-span-2">
                 <label className="text-sm font-medium text-slate-800 dark:text-slate-200">
-                  Contact Person <span className="text-rose-600">*</span>
+                  Full name <span className="text-rose-600">*</span>
                 </label>
                 <input
                   value={draft.contactPerson}
                   onChange={(e) =>
                     setDraft((d) => ({ ...d, contactPerson: e.target.value }))
                   }
-                  placeholder="Enter contact person name"
+                  placeholder="John Doe"
                   className="h-12 w-full rounded-xl border border-slate-200 bg-white px-4 text-base text-slate-900 outline-none focus:ring-2 focus:ring-primary/30 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:placeholder:text-slate-500 dark:focus:ring-primary/40"
                 />
               </div>
 
               <div className="space-y-1">
                 <label className="text-sm font-medium text-slate-800 dark:text-slate-200">
-                  Work Email <span className="text-rose-600">*</span>
+                  Work email <span className="text-rose-600">*</span>
                 </label>
                 <input
                   value={draft.workEmail}
-                  onChange={(e) => setDraft((d) => ({ ...d, workEmail: e.target.value }))}
-                  placeholder="Enter work email"
+                  onChange={(e) =>
+                    setDraft((d) => ({ ...d, workEmail: e.target.value }))
+                  }
+                  placeholder="john.doe@example.com"
                   className="h-12 w-full rounded-xl border border-slate-200 bg-white px-4 text-base text-slate-900 outline-none focus:ring-2 focus:ring-primary/30 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:placeholder:text-slate-500 dark:focus:ring-primary/40"
                 />
               </div>
 
               <div className="space-y-1">
                 <label className="text-sm font-medium text-slate-800 dark:text-slate-200">
-                  Job Title <span className="text-rose-600">*</span>
+                  Work phone <span className="text-rose-600">*</span>
+                </label>
+                <input
+                  value={draft.workPhone}
+                  onChange={(e) =>
+                    setDraft((d) => ({ ...d, workPhone: e.target.value }))
+                  }
+                  placeholder="07700900000"
+                  className="h-12 w-full rounded-xl border border-slate-200 bg-white px-4 text-base text-slate-900 outline-none focus:ring-2 focus:ring-primary/30 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:placeholder:text-slate-500 dark:focus:ring-primary/40"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-sm font-medium text-slate-800 dark:text-slate-200">
+                  Job title <span className="text-rose-600">*</span>
                 </label>
                 <input
                   value={draft.jobTitle}
-                  onChange={(e) => setDraft((d) => ({ ...d, jobTitle: e.target.value }))}
-                  placeholder="Enter job title"
+                  onChange={(e) =>
+                    setDraft((d) => ({ ...d, jobTitle: e.target.value }))
+                  }
+                  placeholder="Headteacher"
                   className="h-12 w-full rounded-xl border border-slate-200 bg-white px-4 text-base text-slate-900 outline-none focus:ring-2 focus:ring-primary/30 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:placeholder:text-slate-500 dark:focus:ring-primary/40"
                 />
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-sm font-medium text-slate-800 dark:text-slate-200">
+                  Department <span className="text-rose-600">*</span>
+                </label>
+                <input
+                  value={draft.department}
+                  onChange={(e) =>
+                    setDraft((d) => ({ ...d, department: e.target.value }))
+                  }
+                  placeholder="Management"
+                  className="h-12 w-full rounded-xl border border-slate-200 bg-white px-4 text-base text-slate-900 outline-none focus:ring-2 focus:ring-primary/30 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:placeholder:text-slate-500 dark:focus:ring-primary/40"
+                />
+              </div>
+
+              <div className="space-y-1 sm:col-span-2">
+                <label className="text-sm font-medium text-slate-800 dark:text-slate-200">
+                  Gender <span className="text-rose-600">*</span>
+                </label>
+                <select
+                  value={draft.genderApi}
+                  onChange={(e) =>
+                    setDraft((d) => ({ ...d, genderApi: e.target.value }))
+                  }
+                  className="h-12 w-full cursor-pointer rounded-xl border border-slate-200 bg-white px-4 pr-10 text-base text-slate-900 outline-none focus:ring-2 focus:ring-primary/30 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:focus:ring-primary/40"
+                >
+                  {CONTACT_GENDER_API.map((g) => (
+                    <option key={g} value={g}>
+                      {g}
+                    </option>
+                  ))}
+                </select>
               </div>
             </div>
           )}
@@ -637,6 +1044,52 @@ export default function ContactPage() {
               className="inline-flex cursor-pointer items-center justify-center rounded-xl border border-slate-200 bg-slate-50 px-6 py-3 text-base font-semibold text-slate-900 transition-colors hover:bg-slate-100 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800"
             >
               Cancel
+            </button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={!!deleteTarget}
+        onOpenChange={(open) => {
+          if (!open) closeDeleteModal();
+        }}
+      >
+        <DialogContent
+          className="sm:max-w-md"
+          showCloseButton={!deleteSubmitting}
+        >
+          <DialogHeader>
+            <DialogTitle className="text-xl text-slate-900 dark:text-slate-100">
+              Delete contact
+            </DialogTitle>
+          </DialogHeader>
+
+          <p className="text-sm leading-relaxed text-slate-600 dark:text-slate-400">
+            Are you sure you want to delete{" "}
+            <span className="font-semibold text-slate-900 dark:text-slate-100">
+              {deleteTarget?.name}
+            </span>
+            ? This cannot be undone.
+          </p>
+
+          <DialogFooter className="mt-2 flex flex-wrap gap-2 sm:justify-end">
+            <button
+              type="button"
+              disabled={deleteSubmitting}
+              onClick={closeDeleteModal}
+              className="inline-flex cursor-pointer items-center justify-center rounded-xl border border-slate-200 bg-slate-50 px-5 py-2.5 text-sm font-semibold text-slate-900 transition-colors hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-55 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              disabled={deleteSubmitting}
+              onClick={confirmDeleteContact}
+              className="inline-flex cursor-pointer items-center justify-center gap-2 rounded-xl bg-rose-600 px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-rose-700 disabled:cursor-not-allowed disabled:opacity-55 dark:bg-rose-600 dark:hover:bg-rose-500"
+            >
+              <Trash2 size={16} />
+              Delete
             </button>
           </DialogFooter>
         </DialogContent>
