@@ -226,7 +226,11 @@ function mapMailQueueContactRow(item) {
     industry: typeof industry === "string" ? industry : String(industry ?? ""),
     location: typeof location === "string" ? location : String(location ?? ""),
     radiusKm:
-      radiusKm === "" ? "" : typeof radiusKm === "number" ? radiusKm : String(radiusKm),
+      radiusKm === "" || radiusKm == null
+        ? "N/A"
+        : !isNaN(Number(radiusKm))
+          ? (Number(radiusKm) / 1000).toFixed(2) + " KM"
+          : String(radiusKm),
     phase: phaseRaw !== "" ? String(phaseRaw).trim() || "—" : "—",
   };
 }
@@ -268,6 +272,9 @@ export default function MailSubmissionClient() {
   const [jobTitle, setJobTitle] = useState("All Job Titles");
   const [phase, setPhase] = useState("All Phases");
   const [radius, setRadius] = useState("All Radius Data");
+  const [localAuthority, setLocalAuthority] = useState("All Authorities");
+  const [gender, setGender] = useState("All Genders");
+  const [town, setTown] = useState("All Towns");
 
   useEffect(() => {
     const t = setTimeout(() => setDebouncedKeyword(keyword.trim()), 400);
@@ -311,6 +318,27 @@ export default function MailSubmissionClient() {
     []
   );
 
+  const localAuthorities = useMemo(() => {
+    const list = Array.isArray(importContactFiltersQuery.data?.localAuthorities)
+      ? importContactFiltersQuery.data.localAuthorities.filter(Boolean)
+      : [];
+    return ["All Authorities", ...list.map(String)];
+  }, [importContactFiltersQuery.data]);
+
+  const genders = useMemo(() => {
+    const list = Array.isArray(importContactFiltersQuery.data?.genders)
+      ? importContactFiltersQuery.data.genders.filter(Boolean)
+      : [];
+    return ["All Genders", ...list.map(String)];
+  }, [importContactFiltersQuery.data]);
+
+  const townsList = useMemo(() => {
+    const list = Array.isArray(importContactFiltersQuery.data?.towns)
+      ? importContactFiltersQuery.data.towns.filter(Boolean)
+      : [];
+    return ["All Towns", ...list.map(String)];
+  }, [importContactFiltersQuery.data]);
+
   useEffect(() => {
     const fromQuery = (searchParams?.get("generatedCvId") || "").trim();
     if (fromQuery) {
@@ -342,6 +370,9 @@ export default function MailSubmissionClient() {
       jobTitle,
       phase,
       radius,
+      localAuthority,
+      gender,
+      town,
     ],
     queryFn: async () => {
       const params = { page: 1, limit: MAIL_QUEUE_LIMIT };
@@ -362,10 +393,22 @@ export default function MailSubmissionClient() {
       }
       if (radius !== "All Radius Data") {
         const n = Number(radius);
-        if (!Number.isNaN(n)) params.radius = n;
+        if (!Number.isNaN(n)) params.radius = n * 1000;
+      }
+      if (localAuthority !== "All Authorities" && String(localAuthority).trim()) {
+        params.localAuthority = String(localAuthority).trim();
+      }
+      if (gender !== "All Genders" && String(gender).trim()) {
+        params.gender = String(gender).trim();
+      }
+      if (town !== "All Towns" && String(town).trim()) {
+        params.towns = String(town).trim();
       }
 
+      console.log("---- API Query Params ----", params);
       const res = await apiGet("/import-contact/all", { params });
+      console.log("---- API Response ----", res);
+
       if (res?.success === false)
         throw new Error(res?.message || "Failed to load contacts");
 
@@ -511,7 +554,7 @@ export default function MailSubmissionClient() {
           Search & filter audience
         </div>
 
-        <div className="mt-3 grid gap-3 lg:grid-cols-[1.2fr_repeat(4,1fr)]">
+        <div className="mt-3 grid gap-3 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-8">
           <div className="relative">
             <Search
               size={18}
@@ -550,6 +593,27 @@ export default function MailSubmissionClient() {
             {radii.map((v) => (
               <option key={v} value={v}>
                 {v === "All Radius Data" ? v : `${v} KM`}
+              </option>
+            ))}
+          </select>
+          <select value={localAuthority} onChange={(e) => setLocalAuthority(e.target.value)} className={selectStyles()}>
+            {localAuthorities.map((v) => (
+              <option key={v} value={v}>
+                {v}
+              </option>
+            ))}
+          </select>
+          <select value={gender} onChange={(e) => setGender(e.target.value)} className={selectStyles()}>
+            {genders.map((v) => (
+              <option key={v} value={v}>
+                {v}
+              </option>
+            ))}
+          </select>
+          <select value={town} onChange={(e) => setTown(e.target.value)} className={selectStyles()}>
+            {townsList.map((v) => (
+              <option key={v} value={v}>
+                {v}
               </option>
             ))}
           </select>
@@ -597,7 +661,6 @@ export default function MailSubmissionClient() {
                 <th className="px-5 py-4 font-semibold">Email</th>
                 <th className="px-5 py-4 font-semibold">Organization Name</th>
                 <th className="px-5 py-4 font-semibold">Job Title</th>
-                <th className="px-5 py-4 font-semibold">Industry</th>
                 <th className="px-5 py-4 font-semibold">Location</th>
                 <th className="px-5 py-4 font-semibold">Radius (KM)</th>
                 <th className="px-5 py-4 font-semibold">Phase</th>
@@ -607,7 +670,7 @@ export default function MailSubmissionClient() {
               {importContactsQuery.isPending && rows.length === 0 ? (
                 <tr>
                   <td
-                    colSpan={9}
+                    colSpan={8}
                     className="px-5 py-12 text-center text-base text-black/60 dark:text-slate-400"
                   >
                     Loading contacts…
@@ -616,7 +679,7 @@ export default function MailSubmissionClient() {
               ) : importContactsQuery.isError && rows.length === 0 ? (
                 <tr>
                   <td
-                    colSpan={9}
+                    colSpan={8}
                     className="px-5 py-10 text-center text-base text-red-600 dark:text-red-400"
                   >
                     {importContactsQuery.error?.message || "Failed to load contacts"}
@@ -625,7 +688,7 @@ export default function MailSubmissionClient() {
               ) : rows.length === 0 ? (
                 <tr>
                   <td
-                    colSpan={9}
+                    colSpan={8}
                     className="px-5 py-10 text-center text-base text-black/60 dark:text-slate-400"
                   >
                     No contacts found. Adjust filters and try again.
@@ -649,7 +712,10 @@ export default function MailSubmissionClient() {
                     <td className="px-5 py-4 text-base font-semibold text-black dark:text-slate-100">
                       {r.contactPerson}
                     </td>
-                    <td className="px-5 py-4 text-base text-slate-700 dark:text-slate-200">
+                    <td
+                      className="max-w-[150px] truncate px-5 py-4 text-base text-slate-700 dark:text-slate-200"
+                      title={r.email}
+                    >
                       {r.email}
                     </td>
                     <td className="px-5 py-4 text-base text-slate-700 dark:text-slate-200">
@@ -657,9 +723,6 @@ export default function MailSubmissionClient() {
                     </td>
                     <td className="px-5 py-4 text-base text-slate-700 dark:text-slate-200">
                       {r.jobTitle}
-                    </td>
-                    <td className="px-5 py-4 text-base text-slate-700 dark:text-slate-200">
-                      {r.industry}
                     </td>
                     <td className="px-5 py-4 text-base text-slate-700 dark:text-slate-200">
                       {r.location}
@@ -757,7 +820,7 @@ export default function MailSubmissionClient() {
                   </div>
                 </div>
 
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 gap-3">
                   <div className="rounded-xl bg-slate-50 p-3 dark:bg-slate-900">
                     <div className="text-xs text-black/60 dark:text-slate-400">
                       Phase
@@ -766,14 +829,6 @@ export default function MailSubmissionClient() {
                       <span className="inline-flex items-center rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-800 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100">
                         {r.phase}
                       </span>
-                    </div>
-                  </div>
-                  <div className="rounded-xl bg-slate-50 p-3 dark:bg-slate-900">
-                    <div className="text-xs text-black/60 dark:text-slate-400">
-                      Industry
-                    </div>
-                    <div className="mt-1 text-sm font-medium text-black dark:text-slate-100">
-                      {r.industry}
                     </div>
                   </div>
                 </div>
