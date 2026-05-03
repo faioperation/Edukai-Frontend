@@ -218,12 +218,12 @@ export default function DashboardPage() {
               Latest events from your CV workflow
             </p>
           </div>
-          <button
+          {/* <button
             type="button"
             className="cursor-pointer rounded-md border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 shadow-sm transition-colors hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-200 dark:hover:bg-slate-900"
           >
             Mark all as read
-          </button>
+          </button> */}
         </CardHeader>
         <CardContent className="space-y-3">
           {isError ? (

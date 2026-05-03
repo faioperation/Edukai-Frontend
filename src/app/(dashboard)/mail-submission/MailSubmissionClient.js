@@ -495,10 +495,10 @@ export default function MailSubmissionClient() {
 
       const emailRecordId = String(
         res?.data?.id ??
-          res?.data?.generatedEmailId ??
-          res?.data?.generatedEmail?.id ??
-          res?.generatedEmailId ??
-          ""
+        res?.data?.generatedEmailId ??
+        res?.data?.generatedEmail?.id ??
+        res?.generatedEmailId ??
+        ""
       ).trim();
 
       if (!emailRecordId) {
