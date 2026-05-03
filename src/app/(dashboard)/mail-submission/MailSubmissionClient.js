@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import toast from "react-hot-toast";
 import { useQuery } from "@tanstack/react-query";
-import { Send, Search } from "lucide-react";
+import { Send, Search, Loader2 } from "lucide-react";
 
 import { apiGet, apiPost } from "@/lib/api";
 
@@ -257,6 +257,7 @@ export default function MailSubmissionClient() {
 
   const [selected, setSelected] = useState(() => new Set());
   const [generatedCvId, setGeneratedCvId] = useState("");
+  const [isGenerating, setIsGenerating] = useState(false);
 
   const effectiveGeneratedCvId =
     (searchParams?.get("generatedCvId") || "").trim() || generatedCvId.trim();
@@ -440,6 +441,7 @@ export default function MailSubmissionClient() {
       .map((id) => String(id).trim())
       .filter(Boolean);
 
+    setIsGenerating(true);
     const toastId = toast.loading("Generating email…");
     try {
       const res = await apiPost("/generated-email/generate", {
@@ -473,6 +475,7 @@ export default function MailSubmissionClient() {
       );
     } catch (e) {
       toast.error(e?.message || "Failed to generate email", { id: toastId });
+      setIsGenerating(false);
     }
   }
 
@@ -575,10 +578,11 @@ export default function MailSubmissionClient() {
         <button
           type="button"
           onClick={sendEmail}
+          disabled={isGenerating || selectedCount === 0}
           className="inline-flex w-full cursor-pointer items-center justify-center gap-2 rounded-xl bg-primary px-6 py-3 text-base font-semibold text-primary-foreground transition-transform hover:scale-[1.02] hover:opacity-95 disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto dark:bg-primary"
         >
-          <Send size={18} />
-          Proceed to Compose Email
+          {isGenerating ? <Loader2 className="animate-spin" size={18} /> : <Send size={18} />}
+          {isGenerating ? "Processing..." : "Proceed to Compose Email"}
         </button>
       </div>
 

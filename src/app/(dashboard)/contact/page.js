@@ -91,10 +91,18 @@ function mapImportContactToRow(item) {
   const d = item || {};
   const payload = d.payload && typeof d.payload === "object" ? d.payload : null;
   const orgDetails = d.organizationDetails || {};
+  const orgObj = d.organization && typeof d.organization === "object" ? d.organization : null;
 
   return {
     id: d.id,
-    organizationId: d.organizationId ?? d.OrganizationId ?? "",
+    organizationId:
+      orgObj?.id ??
+      orgObj?.uuid ??
+      orgDetails?.id ??
+      orgDetails?.uuid ??
+      d.organizationId ??
+      d.OrganizationId ??
+      "",
     organizationName:
       d.OrganizationName ??
       d.organizationName ??
@@ -242,6 +250,28 @@ export default function ContactPage() {
     dialogMode,
     draft?.organizationId,
     draft?.organizationName,
+  ]);
+
+  useEffect(() => {
+    if (
+      dialogMode === "edit" &&
+      draft &&
+      !draft.organizationId &&
+      draft.organizationName &&
+      organizationsPickerQuery.data?.length > 0
+    ) {
+      const match = organizationsPickerQuery.data.find(
+        (o) => o.name.toLowerCase() === draft.organizationName.toLowerCase()
+      );
+      if (match) {
+        setDraft((d) => ({ ...d, organizationId: match.id }));
+      }
+    }
+  }, [
+    dialogMode,
+    draft?.organizationId,
+    draft?.organizationName,
+    organizationsPickerQuery.data,
   ]);
 
   const importContactsQuery = useQuery({
@@ -427,12 +457,12 @@ export default function ContactPage() {
   function buildContactBody(d) {
     return {
       organizationId: String(d?.organizationId || "").trim(),
-      fullName: String(d?.contactPerson || "").trim(),
-      workEmail: String(d?.workEmail || "").trim(),
-      workPhone: String(d?.workPhone || "").trim(),
-      jobTitle: String(d?.jobTitle || "").trim(),
-      department: String(d?.department || "").trim(),
-      gender: String(d?.genderApi || "").trim(),
+      FullName: String(d?.contactPerson || "").trim(),
+      WorkEmail: String(d?.workEmail || "").trim(),
+      WorkPhone: String(d?.workPhone || "").trim(),
+      JobTitle: String(d?.jobTitle || "").trim(),
+      Department: String(d?.department || "").trim(),
+      Gender: String(d?.genderApi || "").trim(),
     };
   }
 
@@ -672,15 +702,15 @@ export default function ContactPage() {
           <table className="min-w-full text-left">
             <thead className="bg-slate-50 text-xs font-semibold tracking-wide text-slate-700 dark:bg-slate-900 dark:text-slate-200">
               <tr>
-                <th className="px-5 py-4">CONTACT PERSON & MAIL</th>
-                <th className="px-5 py-4">JOB TITLE</th>
-                <th className="px-5 py-4">ORGANIZATION & LOCAL AUTHORITY</th>
-                <th className="px-5 py-4">PHASE</th>
-                <th className="px-5 py-4">TOWN</th>
-                <th className="px-5 py-4 text-right">ACTIONS</th>
+                <th className="px-5 py-4 w-[25%]">CONTACT PERSON & MAIL</th>
+                <th className="px-5 py-4 w-[15%]">JOB TITLE</th>
+                <th className="px-5 py-4 w-[30%]">ORGANIZATION & LOCAL AUTHORITY</th>
+                <th className="px-5 py-4 w-[10%]">PHASE</th>
+                <th className="px-5 py-4 w-[10%]">TOWN</th>
+                <th className="px-5 py-4 w-[10%] text-right">ACTIONS</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
+            <tbody className="">
               {importContactsQuery.isLoading ? (
                 <tr>
                   <td
