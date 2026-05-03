@@ -184,7 +184,7 @@ function sanitizeEmailRecord(data) {
   return rest;
 }
 
-function applyEmailDataToForm(data, setPayload, setSubject, setMessageBody, setLoadError) {
+function applyEmailDataToForm(data, setPayload, setters, setLoadError) {
   setLoadError("");
   const clean = sanitizeEmailRecord(data);
   if (!clean) {
@@ -192,22 +192,17 @@ function applyEmailDataToForm(data, setPayload, setSubject, setMessageBody, setL
     return;
   }
   setPayload(clean);
-  setSubject(na(clean.subject) || fallbackSubjectLine());
-  const fromApiComposite = na(
-    clean.messageBody ??
-      clean.message_body ??
-      clean.emailBody ??
-      clean.email_body ??
-      clean.fullMessage ??
-      clean.full_message ??
-      clean.body ??
-      ""
-  );
-  const composed = buildEmailBodyFromApi(clean);
-  setMessageBody(
-    fromApiComposite.trim() ||
-      composed.trim() ||
-      "(No message body was returned — you can type the email below.)"
+  setters.setSubject(na(clean.subject) || fallbackSubjectLine());
+  setters.setSalutation(na(clean.salutation));
+  setters.setIntroParagraph(na(clean.introParagraph));
+  setters.setKeyHighlights(Array.isArray(clean.keyHighlights) ? clean.keyHighlights : []);
+  setters.setImpactStatement(na(clean.impactStatement));
+  setters.setClosingStatement(na(clean.closingStatement));
+  setters.setNbFooter(na(clean.nbFooter));
+  setters.setSignatureBlock(
+    clean.signatureBlock && typeof clean.signatureBlock === "object"
+      ? clean.signatureBlock
+      : { contact: {} }
   );
 }
 
@@ -225,7 +220,33 @@ export default function ComposeClient() {
   const [loadError, setLoadError] = useState("");
   const [isEditing, setIsEditing] = useState(false);
   const [subject, setSubject] = useState("");
-  const [messageBody, setMessageBody] = useState("");
+  const [salutation, setSalutation] = useState("");
+  const [introParagraph, setIntroParagraph] = useState("");
+  const [keyHighlights, setKeyHighlights] = useState([]);
+  const [impactStatement, setImpactStatement] = useState("");
+  const [closingStatement, setClosingStatement] = useState("");
+  const [nbFooter, setNbFooter] = useState("");
+  const [signatureBlock, setSignatureBlock] = useState({ contact: {} });
+
+  const computedMessageBody = useMemo(() => {
+    return buildEmailBodyFromApi({
+      salutation,
+      introParagraph,
+      keyHighlights,
+      impactStatement,
+      closingStatement,
+      nbFooter,
+      signatureBlock,
+    });
+  }, [
+    salutation,
+    introParagraph,
+    keyHighlights,
+    impactStatement,
+    closingStatement,
+    nbFooter,
+    signatureBlock,
+  ]);
   const [isSending, setIsSending] = useState(false);
   const [isSavingEmail, setIsSavingEmail] = useState(false);
 
@@ -281,8 +302,16 @@ export default function ComposeClient() {
     applyEmailDataToForm(
       generatedEmailQuery.data,
       setPayload,
-      setSubject,
-      setMessageBody,
+      {
+        setSubject,
+        setSalutation,
+        setIntroParagraph,
+        setKeyHighlights,
+        setImpactStatement,
+        setClosingStatement,
+        setNbFooter,
+        setSignatureBlock,
+      },
       setLoadError
     );
   }, [
@@ -311,7 +340,21 @@ export default function ComposeClient() {
         setLoadError("Invalid saved email response.");
         return;
       }
-      applyEmailDataToForm(data, setPayload, setSubject, setMessageBody, setLoadError);
+      applyEmailDataToForm(
+        data,
+        setPayload,
+        {
+          setSubject,
+          setSalutation,
+          setIntroParagraph,
+          setKeyHighlights,
+          setImpactStatement,
+          setClosingStatement,
+          setNbFooter,
+          setSignatureBlock,
+        },
+        setLoadError
+      );
     } catch (e) {
       setLoadError(e?.message || "Could not read saved email.");
     }
@@ -394,8 +437,8 @@ export default function ComposeClient() {
       toast.error("Subject is required");
       return false;
     }
-    if (!messageBody.trim()) {
-      toast.error("Email body is required");
+    if (!computedMessageBody.trim()) {
+      toast.error("Email content cannot be empty");
       return false;
     }
     const toastId = toast.loading("Saving email…");
@@ -403,7 +446,13 @@ export default function ComposeClient() {
     try {
       const body = {
         subject: na(subject).trim(),
-        messageBody: messageBody.trim(),
+        salutation: na(salutation).trim(),
+        introParagraph: na(introParagraph).trim(),
+        keyHighlights,
+        impactStatement: na(impactStatement).trim(),
+        closingStatement: na(closingStatement).trim(),
+        nbFooter: na(nbFooter).trim(),
+        signatureBlock,
       };
       const res = await apiPatch(
         `/generated-email/${encodeURIComponent(generatedEmailId)}`,
@@ -433,8 +482,8 @@ export default function ComposeClient() {
       toast.error("Subject is required");
       return;
     }
-    if (!messageBody.trim()) {
-      toast.error("Email body is required");
+    if (!computedMessageBody.trim()) {
+      toast.error("Email content cannot be empty");
       return;
     }
     if (!generatedEmailId) {
@@ -538,24 +587,80 @@ export default function ComposeClient() {
           />
         </div>
 
-        <div className="mt-6 space-y-3">
-          <div className="text-xs font-semibold uppercase tracking-wide text-black/55 dark:text-slate-400">
-            Message (salutation, intro, highlights as bullets, impact, closing, NB, signature)
+        {!isEditing ? (
+          <div className="mt-6 space-y-3">
+            <div className="text-xs font-semibold uppercase tracking-wide text-black/55 dark:text-slate-400">
+              Message Preview
+            </div>
+            <textarea
+              value={computedMessageBody}
+              readOnly
+              rows={22}
+              className={`${textareaBase} min-h-[420px] whitespace-pre-wrap read-only:cursor-default`}
+            />
           </div>
-          <p className="text-xs text-black/45 dark:text-slate-500">
-            Generated from the API: <strong>Key Highlights</strong> are merged as a point-wise list
-            under “Key Highlights:”.
-          </p>
-          <textarea
-            value={messageBody}
-            onChange={(e) => setMessageBody(e.target.value)}
-            readOnly={!isEditing}
-            rows={22}
-            spellCheck={true}
-            placeholder="Email message…"
-            className={`${textareaBase} min-h-[420px] whitespace-pre-wrap read-only:cursor-default`}
-          />
-        </div>
+        ) : (
+          <div className="mt-6 space-y-6">
+            <div className="text-xs font-semibold uppercase tracking-wide text-black/55 dark:text-slate-400">
+              Edit Message Parts
+            </div>
+            <div className="space-y-3">
+              <label className="text-sm font-medium text-slate-700 dark:text-slate-300">Salutation</label>
+              <input value={salutation} onChange={e => setSalutation(e.target.value)} className={`h-11 ${inputBase}`} />
+            </div>
+            <div className="space-y-3">
+              <label className="text-sm font-medium text-slate-700 dark:text-slate-300">Intro Paragraph</label>
+              <textarea value={introParagraph} onChange={e => setIntroParagraph(e.target.value)} rows={4} className={textareaBase} />
+            </div>
+            <div className="space-y-3">
+              <label className="text-sm font-medium text-slate-700 dark:text-slate-300">Key Highlights</label>
+              {keyHighlights.map((kh, idx) => (
+                <div key={idx} className="flex flex-col gap-2 rounded-lg border border-slate-200 p-3 dark:border-slate-800">
+                  <div className="flex gap-2">
+                    <input placeholder="Icon" value={kh.icon || ""} onChange={e => {
+                      const newKh = [...keyHighlights];
+                      newKh[idx] = { ...newKh[idx], icon: e.target.value };
+                      setKeyHighlights(newKh);
+                    }} className={`w-16 h-11 ${inputBase} px-2 text-center`} />
+                    <input placeholder="Title" value={kh.title || ""} onChange={e => {
+                      const newKh = [...keyHighlights];
+                      newKh[idx] = { ...newKh[idx], title: e.target.value };
+                      setKeyHighlights(newKh);
+                    }} className={`flex-1 h-11 ${inputBase}`} />
+                  </div>
+                  <textarea placeholder="Description" value={kh.description || ""} onChange={e => {
+                      const newKh = [...keyHighlights];
+                      newKh[idx] = { ...newKh[idx], description: e.target.value };
+                      setKeyHighlights(newKh);
+                    }} rows={2} className={textareaBase} />
+                </div>
+              ))}
+            </div>
+            <div className="space-y-3">
+              <label className="text-sm font-medium text-slate-700 dark:text-slate-300">Impact Statement</label>
+              <textarea value={impactStatement} onChange={e => setImpactStatement(e.target.value)} rows={3} className={textareaBase} />
+            </div>
+            <div className="space-y-3">
+              <label className="text-sm font-medium text-slate-700 dark:text-slate-300">Closing Statement</label>
+              <input value={closingStatement} onChange={e => setClosingStatement(e.target.value)} className={`h-11 ${inputBase}`} />
+            </div>
+            <div className="space-y-3">
+              <label className="text-sm font-medium text-slate-700 dark:text-slate-300">NB Footer</label>
+              <textarea value={nbFooter} onChange={e => setNbFooter(e.target.value)} rows={3} className={textareaBase} />
+            </div>
+            <div className="space-y-3">
+              <label className="text-sm font-medium text-slate-700 dark:text-slate-300">Signature Block</label>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <input placeholder="Name" value={signatureBlock.name || ""} onChange={e => setSignatureBlock({...signatureBlock, name: e.target.value})} className={`h-11 ${inputBase}`} />
+                <input placeholder="Designation" value={signatureBlock.designation || ""} onChange={e => setSignatureBlock({...signatureBlock, designation: e.target.value})} className={`h-11 ${inputBase}`} />
+                <input placeholder="Phone" value={signatureBlock.contact?.phone || ""} onChange={e => setSignatureBlock({...signatureBlock, contact: {...signatureBlock.contact, phone: e.target.value}})} className={`h-11 ${inputBase}`} />
+                <input placeholder="Mobile" value={signatureBlock.contact?.mobile || ""} onChange={e => setSignatureBlock({...signatureBlock, contact: {...signatureBlock.contact, mobile: e.target.value}})} className={`h-11 ${inputBase}`} />
+                <input placeholder="Address" value={signatureBlock.contact?.address || ""} onChange={e => setSignatureBlock({...signatureBlock, contact: {...signatureBlock.contact, address: e.target.value}})} className={`h-11 ${inputBase}`} />
+                <input placeholder="Website" value={signatureBlock.contact?.website || ""} onChange={e => setSignatureBlock({...signatureBlock, contact: {...signatureBlock.contact, website: e.target.value}})} className={`h-11 ${inputBase}`} />
+              </div>
+            </div>
+          </div>
+        )}
 
         <div className="mt-6 space-y-3">
           <div className="text-sm font-semibold text-black/70 dark:text-slate-300">
