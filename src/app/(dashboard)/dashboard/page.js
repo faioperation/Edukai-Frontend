@@ -138,7 +138,7 @@ export default function DashboardPage() {
   const activities = useMemo(() => {
     if (isLoading) return [];
     const logs = data?.latestActivityLogs || [];
-    return logs.map((log) => {
+    return logs.slice(0, 4).map((log) => {
       const userLabel = log?.user?.name || log?.user?.email || "System";
       const { dotClass, rowClass } = activityStyle(log?.action);
       return {
@@ -222,7 +222,7 @@ export default function DashboardPage() {
             type="button"
             className="cursor-pointer rounded-md border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 shadow-sm transition-colors hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-200 dark:hover:bg-slate-900"
           >
-            Mark all as read
+            Mark all as rea
           </button> */}
         </CardHeader>
         <CardContent className="space-y-3">
