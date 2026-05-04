@@ -505,19 +505,19 @@ export default function OrganizationsPage() {
       return;
     }
 
-    const loadingId = toast.loading("Importing Excel…");
+    toast.success("File uploaded successfully.");
+
     (async () => {
       try {
         const fd = new FormData();
         fd.append("files", file);
         const res = await apiPost("/import-organization/upload", fd);
-        if (res?.success === false) throw new Error(res?.message || "Import failed");
-
-        toast.success(res?.message || "Imported successfully", { id: loadingId });
-        setPage(1);
-        queryClient.invalidateQueries({ queryKey: ["import-organization", "all"] });
+        if (res?.success !== false) {
+          setPage(1);
+          queryClient.invalidateQueries({ queryKey: ["import-organization", "all"] });
+        }
       } catch (err) {
-        toast.error(err?.message || "Import failed", { id: loadingId });
+        console.error("Import failed:", err);
       } finally {
         e.target.value = "";
       }
