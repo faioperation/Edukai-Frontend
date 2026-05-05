@@ -19,6 +19,7 @@ import {
   Layers,
   Shield,
   Eye,
+  Loader2,
 } from "lucide-react";
 
 import {
@@ -776,7 +777,10 @@ export default function ContactPage() {
                     colSpan={6}
                     className="px-5 py-10 text-center text-sm text-slate-600 dark:text-slate-400"
                   >
-                    Loading contacts…
+                    <div className="flex items-center justify-center gap-2">
+                      <Loader2 className="h-5 w-5 animate-spin text-primary" />
+                      <span>Loading contacts…</span>
+                    </div>
                   </td>
                 </tr>
               ) : importContactsQuery.isError ? (
