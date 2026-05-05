@@ -19,6 +19,7 @@ import {
   Building2,
   Phone,
   UserRound,
+  Loader2,
 } from "lucide-react";
 
 import {
@@ -736,10 +737,13 @@ export default function OrganizationsPage() {
               {importOrgsQuery.isLoading ? (
                 <tr>
                   <td
-                    colSpan={5}
+                    colSpan={6}
                     className="px-5 py-10 text-center text-sm text-slate-600 dark:text-slate-400"
                   >
-                    Loading organizations…
+                    <div className="flex items-center justify-center gap-2">
+                      <Loader2 className="h-5 w-5 animate-spin text-primary" />
+                      <span>Loading organizations…</span>
+                    </div>
                   </td>
                 </tr>
               ) : importOrgsQuery.isError ? (

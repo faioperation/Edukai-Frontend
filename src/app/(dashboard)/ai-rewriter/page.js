@@ -11,6 +11,7 @@ import { apiGet, apiPatch, apiPut } from "@/lib/api";
 
 function na(v) {
   if (v === null || v === undefined) return "";
+  if (typeof v === "object") return "";
   const s = String(v).trim();
   return s === "null" ? "" : s;
 }
@@ -197,7 +198,9 @@ function normalizeCvPayload(cv) {
       na(cv.professionalTitle) || na(header?.professional_title) || cv.professionalTitle,
     location: na(cv.location) || na(header?.location) || cv.location,
     contactDetails:
-      na(cv.contactDetails) || na(header?.contact_details) || cv.contactDetails,
+      (typeof cv.contactDetails === "object" ? cv.contactDetails : na(cv.contactDetails)) ||
+      (typeof header?.contact_details === "object" ? header?.contact_details : na(header?.contact_details)) ||
+      cv.contactDetails,
     profileTitle: na(cv.profileTitle) || na(pp?.title) || "Professional Profile",
     profileContent: na(cv.profileContent) || na(pp?.content) || "N/A",
     jobs,
@@ -218,7 +221,53 @@ function buildEnhancedFromGeneratedCv(data) {
     designation = "—";
   }
 
-  const contactDetails = na(d.contactDetails) || "—";
+  let cdStr = "—";
+  if (d.contactDetails && typeof d.contactDetails === "object") {
+    // try typical fields
+    const parts = [
+      d.contactDetails.email,
+      d.contactDetails.phone,
+      d.contactDetails.linkedin,
+      d.contactDetails.github,
+      d.contactDetails.portfolio,
+      d.contactDetails.website
+    ].filter(Boolean);
+    if (parts.length > 0) {
+      cdStr = parts.join(" / ");
+    } else {
+      // fallback to any string values
+      const vals = Object.values(d.contactDetails).filter(v => v && typeof v === "string");
+      cdStr = vals.length > 0 ? vals.join(" / ") : "—";
+    }
+  } else if (typeof d.contactDetails === "string") {
+    try {
+      // It might be a JSON string
+      const parsed = JSON.parse(d.contactDetails);
+      if (parsed && typeof parsed === "object") {
+         const parts = [
+          parsed.email,
+          parsed.phone,
+          parsed.linkedin,
+          parsed.github,
+          parsed.portfolio,
+          parsed.website
+        ].filter(Boolean);
+        if (parts.length > 0) {
+          cdStr = parts.join(" / ");
+        } else {
+          const vals = Object.values(parsed).filter(v => v && typeof v === "string");
+          cdStr = vals.length > 0 ? vals.join(" / ") : "—";
+        }
+      } else {
+        cdStr = na(d.contactDetails) || "—";
+      }
+    } catch {
+       cdStr = na(d.contactDetails) || "—";
+    }
+  } else {
+    cdStr = na(d.contactDetails) || "—";
+  }
+  const contactDetails = cdStr;
   const location = na(d.location) || "—";
   const logo = na(d.logo);
 
