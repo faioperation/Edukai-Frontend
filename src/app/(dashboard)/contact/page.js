@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import toast from "react-hot-toast";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import Link from "next/link";
 import {
   BriefcaseBusiness,
   Building2,
@@ -14,6 +15,10 @@ import {
   Search,
   Trash2,
   UserRound,
+  ChevronDown,
+  Layers,
+  Shield,
+  Eye,
 } from "lucide-react";
 
 import {
@@ -38,7 +43,7 @@ const PHASES = [
   "16_plus",
 ];
 
-const GENDERS = ["boys", "girls", "mixed"];
+const GENDERS = ["Boys", "Girls", "Mixed"];
 
 function normalizePhase(v) {
   const s = String(v || "").trim().toLowerCase();
@@ -49,9 +54,11 @@ function normalizePhase(v) {
 function normalizeGender(v) {
   const s = String(v || "").trim().toLowerCase();
   if (!s) return "";
-  if (s === "male" || s === "m") return "boys";
-  if (s === "female" || s === "f") return "girls";
-  return s;
+  if (s === "male" || s === "m" || s === "boys") return "Boys";
+  if (s === "female" || s === "f" || s === "girls") return "Girls";
+  if (s === "mixed") return "Mixed";
+  // Fallback to title case for any other values
+  return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
 function pickOrganizationFkId(d) {
@@ -133,6 +140,7 @@ function mapImportContactToRow(item) {
     jobTitle: d.JobTitle ?? d.jobTitle ?? payload?.JobTitle ?? "",
     department: d.Department ?? d.department ?? payload?.Department ?? "",
     phase: normalizePhase(d.Phase ?? d.phase ?? orgDetails?.Phase ?? orgDetails?.phase ?? payload?.Phase),
+    rawPhase: d.Phase ?? d.phase ?? orgDetails?.Phase ?? orgDetails?.phase ?? payload?.Phase ?? "",
     town: d.Town ?? d.town ?? orgDetails?.Town ?? orgDetails?.town ?? "",
     gender: normalizeGender(d.Gender ?? d.gender ?? orgDetails?.Gender ?? orgDetails?.gender ?? payload?.Gender),
     rawGender: d.Gender ?? d.gender ?? orgDetails?.Gender ?? orgDetails?.gender ?? payload?.Gender ?? "",
@@ -188,6 +196,7 @@ export default function ContactPage() {
   const [gender, setGender] = useState("all");
   const [localAuthority, setLocalAuthority] = useState("all");
   const [page, setPage] = useState(1);
+  const [limit, setLimit] = useState(200);
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [dialogMode, setDialogMode] = useState("add"); // add | edit
@@ -196,12 +205,12 @@ export default function ContactPage() {
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [deleteSubmitting, setDeleteSubmitting] = useState(false);
 
-  const importOrgFiltersQuery = useQuery({
-    queryKey: ["import-organization", "filters"],
+  const importContactFiltersQuery = useQuery({
+    queryKey: ["import-contact", "filters"],
     queryFn: async () => {
-      const res = await apiGet("/import-organization/filters");
+      const res = await apiGet("/import-contact/filters");
       if (res?.success === false)
-        throw new Error(res?.message || "Failed to load organization filters");
+        throw new Error(res?.message || "Failed to load contact filters");
       return res;
     },
     staleTime: 60_000,
@@ -275,16 +284,16 @@ export default function ContactPage() {
   ]);
 
   const importContactsQuery = useQuery({
-    queryKey: ["import-contact", "all", { q, job, phase, town, gender, localAuthority, page }],
+    queryKey: ["import-contact", "all", { q, job, phase, town, gender, localAuthority, page, limit }],
     queryFn: async () => {
       const params = {
         searchTerm: q?.trim() ? q.trim() : undefined,
-        jobTitle: job === "all" ? undefined : job,
-        phase: phase === "all" ? undefined : optionLabel(phase),
-        town: town === "all" ? undefined : town,
-        gender: gender === "all" ? undefined : optionLabel(gender),
+        jobs: job === "all" ? undefined : job,
+        phase: phase === "all" ? undefined : phase,
+        towns: town === "all" ? undefined : town,
+        gender: gender === "all" ? undefined : gender,
         localAuthority: localAuthority === "all" ? undefined : localAuthority,
-        limit: DEFAULT_LIMIT,
+        limit,
         page,
       };
       const res = await apiGet("/import-contact/all", { params });
@@ -315,28 +324,12 @@ export default function ContactPage() {
   const rows = importContactsQuery.data?.items || [];
   const meta = importContactsQuery.data?.meta || {
     page,
-    limit: DEFAULT_LIMIT,
+    limit,
     total: rows.length,
     totalPage: 1,
   };
-
-  const jobs = useMemo(() => {
-    const set = new Set(rows.map((r) => r.jobTitle).filter(Boolean));
-    return Array.from(set).sort((a, b) => a.localeCompare(b));
-  }, [rows]);
-
-  const towns = useMemo(() => {
-    const set = new Set(rows.map((r) => r.town).filter(Boolean));
-    return Array.from(set).sort((a, b) => a.localeCompare(b));
-  }, [rows]);
-
-  const authorities = useMemo(() => {
-    const set = new Set(rows.map((r) => r.localAuthority).filter(Boolean));
-    return Array.from(set).sort((a, b) => a.localeCompare(b));
-  }, [rows]);
-
   const filterOptions = useMemo(() => {
-    const payload = importOrgFiltersQuery.data || {};
+    const payload = importContactFiltersQuery.data || {};
     const d = payload?.data || payload?.filters || payload || {};
 
     const from = (...keys) => {
@@ -347,22 +340,26 @@ export default function ContactPage() {
       return null;
     };
 
+    const jobsFromApi = from("jobs", "jobList");
     const phasesFromApi = from("phases", "phase", "phaseList");
+    const townsFromApi = from("towns", "townList");
     const gendersFromApi = from("genders", "gender", "genderList");
     const lasFromApi = from(
+      "authorities",
       "localAuthorities",
       "local_authorities",
       "localAuthority",
-      "local_authority",
-      "authorities"
+      "local_authority"
     );
 
     return {
-      phases: (phasesFromApi?.length ? phasesFromApi : PHASES).map((x) => normalizePhase(x)),
-      genders: (gendersFromApi?.length ? gendersFromApi : GENDERS).map((x) => normalizeGender(x)),
-      localAuthorities: (lasFromApi?.length ? lasFromApi : authorities).map((x) => String(x)),
+      jobs: (jobsFromApi || []).map((x) => String(x)),
+      phases: (phasesFromApi || []).map((x) => String(x)),
+      towns: (townsFromApi || []).map((x) => String(x)),
+      genders: (gendersFromApi || []).map((x) => String(x)),
+      localAuthorities: (lasFromApi || []).map((x) => String(x)),
     };
-  }, [authorities, importOrgFiltersQuery.data]);
+  }, [importContactFiltersQuery.data]);
 
   const filtered = useMemo(() => {
     const query = q.trim().toLowerCase();
@@ -373,9 +370,9 @@ export default function ContactPage() {
             .some((x) => String(x).toLowerCase().includes(query))
         : true;
       const jobOk = job === "all" ? true : r.jobTitle === job;
-      const phaseOk = phase === "all" ? true : r.phase === phase;
+      const phaseOk = phase === "all" ? true : r.rawPhase === phase;
       const townOk = town === "all" ? true : r.town === town;
-      const genderOk = gender === "all" ? true : r.gender === gender;
+      const genderOk = gender === "all" ? true : r.rawGender === gender;
       const laOk = localAuthority === "all" ? true : r.localAuthority === localAuthority;
       return qOk && jobOk && phaseOk && townOk && genderOk && laOk;
     });
@@ -629,70 +626,133 @@ export default function ContactPage() {
             />
           </div>
 
-          <select
-            value={job}
-            onChange={(e) => setJob(e.target.value)}
-            className="h-12 w-full cursor-pointer rounded-xl border border-slate-200 bg-white px-4 pr-10 text-base text-slate-900 outline-none focus:ring-2 focus:ring-primary/30 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:focus:ring-primary/40"
-          >
-            <option value="all">All Jobs</option>
-            {jobs.map((j) => (
-              <option key={j} value={j}>
-                {j}
-              </option>
-            ))}
-          </select>
+          <div className="relative">
+            <BriefcaseBusiness size={18} className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-slate-500 dark:text-slate-400" />
+            <select
+              value={job}
+              onChange={(e) => setJob(e.target.value)}
+              className="h-12 w-full appearance-none cursor-pointer rounded-xl border border-slate-200 bg-white pl-11 pr-10 text-base text-slate-900 outline-none focus:ring-2 focus:ring-primary/30 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:focus:ring-primary/40"
+            >
+              <option value="all">All Jobs</option>
+              {filterOptions.jobs.map((j) => (
+                <option key={j} value={j}>
+                  {j}
+                </option>
+              ))}
+            </select>
+            <ChevronDown size={18} className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-slate-400" />
+          </div>
 
-          <select
-            value={phase}
-            onChange={(e) => setPhase(e.target.value)}
-            className="h-12 w-full cursor-pointer rounded-xl border border-slate-200 bg-white px-4 pr-10 text-base text-slate-900 outline-none focus:ring-2 focus:ring-primary/30 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:focus:ring-primary/40"
-          >
-            <option value="all">All Phases</option>
-            {filterOptions.phases.map((p) => (
-              <option key={p} value={p}>
-                {optionLabel(p)}
-              </option>
-            ))}
-          </select>
+          <div className="relative">
+            <Layers size={18} className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-slate-500 dark:text-slate-400" />
+            <select
+              value={phase}
+              onChange={(e) => setPhase(e.target.value)}
+              className="h-12 w-full appearance-none cursor-pointer rounded-xl border border-slate-200 bg-white pl-11 pr-10 text-base text-slate-900 outline-none focus:ring-2 focus:ring-primary/30 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:focus:ring-primary/40"
+            >
+              <option value="all">All Phases</option>
+              {filterOptions.phases.map((p) => (
+                <option key={p} value={p}>
+                  {p}
+                </option>
+              ))}
+            </select>
+            <ChevronDown size={18} className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-slate-400" />
+          </div>
 
-          <select
-            value={town}
-            onChange={(e) => setTown(e.target.value)}
-            className="h-12 w-full cursor-pointer rounded-xl border border-slate-200 bg-white px-4 pr-10 text-base text-slate-900 outline-none focus:ring-2 focus:ring-primary/30 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:focus:ring-primary/40"
-          >
-            <option value="all">All Towns</option>
-            {towns.map((t) => (
-              <option key={t} value={t}>
-                {t}
-              </option>
-            ))}
-          </select>
+          <div className="relative">
+            <MapPin size={18} className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-slate-500 dark:text-slate-400" />
+            <select
+              value={town}
+              onChange={(e) => setTown(e.target.value)}
+              className="h-12 w-full appearance-none cursor-pointer rounded-xl border border-slate-200 bg-white pl-11 pr-10 text-base text-slate-900 outline-none focus:ring-2 focus:ring-primary/30 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:focus:ring-primary/40"
+            >
+              <option value="all">All Towns</option>
+              {filterOptions.towns.map((t) => (
+                <option key={t} value={t}>
+                  {t}
+                </option>
+              ))}
+            </select>
+            <ChevronDown size={18} className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-slate-400" />
+          </div>
 
-          <select
-            value={gender}
-            onChange={(e) => setGender(e.target.value)}
-            className="h-12 w-full cursor-pointer rounded-xl border border-slate-200 bg-white px-4 pr-10 text-base text-slate-900 outline-none focus:ring-2 focus:ring-primary/30 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:focus:ring-primary/40"
-          >
-            <option value="all">All Genders</option>
-            {filterOptions.genders.map((g) => (
-              <option key={g} value={g}>
-                {optionLabel(g)}
-              </option>
-            ))}
-          </select>
+          <div className="relative">
+            <UserRound size={18} className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-slate-500 dark:text-slate-400" />
+            <select
+              value={gender}
+              onChange={(e) => setGender(e.target.value)}
+              className="h-12 w-full appearance-none cursor-pointer rounded-xl border border-slate-200 bg-white pl-11 pr-10 text-base text-slate-900 outline-none focus:ring-2 focus:ring-primary/30 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:focus:ring-primary/40"
+            >
+              <option value="all">All Genders</option>
+              {filterOptions.genders.map((g) => (
+                <option key={g} value={g}>
+                  {g}
+                </option>
+              ))}
+            </select>
+            <ChevronDown size={18} className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-slate-400" />
+          </div>
 
+          <div className="relative">
+            <Shield size={18} className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-slate-500 dark:text-slate-400" />
+            <select
+              value={localAuthority}
+              onChange={(e) => setLocalAuthority(e.target.value)}
+              className="h-12 w-full appearance-none cursor-pointer rounded-xl border border-slate-200 bg-white pl-11 pr-10 text-base text-slate-900 outline-none focus:ring-2 focus:ring-primary/30 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:focus:ring-primary/40"
+            >
+              <option value="all">All Local Authority</option>
+              {filterOptions.localAuthorities.map((a) => (
+                <option key={a} value={a}>
+                  {a}
+                </option>
+              ))}
+            </select>
+            <ChevronDown size={18} className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-slate-400" />
+          </div>
+        </div>
+      </div>
+
+      <div className="flex flex-col items-center justify-between gap-4 rounded-xl border border-primary/20 bg-primary/10 p-4 sm:flex-row dark:border-primary/20 dark:bg-primary/10">
+        <div className="flex items-center gap-3 text-sm text-slate-800 dark:text-slate-200">
+          <span className="font-medium">Items per page:</span>
           <select
-            value={localAuthority}
-            onChange={(e) => setLocalAuthority(e.target.value)}
-            className="h-12 w-full cursor-pointer rounded-xl border border-slate-200 bg-white px-4 pr-10 text-base text-slate-900 outline-none focus:ring-2 focus:ring-primary/30 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:focus:ring-primary/40"
+            value={limit}
+            onChange={(e) => {
+              setLimit(Number(e.target.value));
+              setPage(1);
+            }}
+            className="cursor-pointer appearance-none rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 pr-8 font-medium text-slate-700 outline-none hover:bg-slate-100 focus:border-primary focus:ring-2 focus:ring-primary/20 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
           >
-            <option value="all">All Local Authority</option>
-            {filterOptions.localAuthorities.map((a) => (
-              <option key={a} value={a}>
-                {a}
+            {[100, 200, 500, 1000, 5000, 10000].map((val) => (
+              <option key={val} value={val}>
+                {val}
               </option>
             ))}
           </select>
+          <span className="hidden font-medium sm:inline-block">Total {meta.total} records</span>
+        </div>
+
+        <div className="flex items-center gap-4 text-sm">
+          <span className="font-medium text-slate-800 dark:text-slate-200">
+            Page {meta.page} of {meta.totalPage}
+          </span>
+          <div className="flex gap-2">
+            <button
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+              disabled={meta.page <= 1 || importContactsQuery.isFetching}
+              className="rounded-lg border border-slate-200 bg-white px-4 py-1.5 font-medium text-slate-700 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+            >
+              Previous
+            </button>
+            <button
+              onClick={() => setPage((p) => Math.min(meta.totalPage, p + 1))}
+              disabled={meta.page >= meta.totalPage || importContactsQuery.isFetching}
+              className="rounded-lg border border-slate-200 bg-white px-4 py-1.5 font-medium text-slate-700 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+            >
+              Next
+            </button>
+          </div>
         </div>
       </div>
 
@@ -702,12 +762,11 @@ export default function ContactPage() {
           <table className="min-w-full text-left">
             <thead className="bg-slate-50 text-xs font-semibold tracking-wide text-slate-700 dark:bg-slate-900 dark:text-slate-200">
               <tr>
-                <th className="px-5 py-4 w-[25%]">CONTACT PERSON & MAIL</th>
-                <th className="px-5 py-4 w-[15%]">JOB TITLE</th>
-                <th className="px-5 py-4 w-[30%]">ORGANIZATION & LOCAL AUTHORITY</th>
-                <th className="px-5 py-4 w-[10%]">PHASE</th>
-                <th className="px-5 py-4 w-[10%]">TOWN</th>
-                <th className="px-5 py-4 w-[10%] text-right">ACTIONS</th>
+                <th className="px-5 py-4">CONTACT PERSON & MAIL</th>
+                <th className="px-5 py-4">ORGANIZATION NAME</th>
+                <th className="px-5 py-4">JOB TITLE</th>
+                <th className="px-5 py-4">LOCAL AUTHORITY</th>
+                <th className="px-5 py-4 text-right">ACTIONS</th>
               </tr>
             </thead>
             <tbody className="">
@@ -733,74 +792,68 @@ export default function ContactPage() {
               {filtered.map((row) => (
                 <tr key={row.id} className="hover:bg-slate-100/70 dark:hover:bg-slate-900/40">
                   <td className="px-5 py-4">
-                    <div className="flex items-start gap-3">
-                      <div className="mt-0.5 flex h-9 w-9 items-center justify-center rounded-xl bg-primary/10 text-sm font-semibold text-primary dark:bg-primary/15 dark:text-primary">
-                        {initials(row.contactPerson)}
+                    <div className="flex flex-col gap-1.5 min-w-0">
+                      <div className="truncate text-sm font-bold text-slate-900 dark:text-slate-100">
+                        {row.contactPerson || "N/A"}
                       </div>
-                      <div className="min-w-0">
-                        <div className="truncate text-sm font-semibold text-slate-900 dark:text-slate-100">
-                          {row.contactPerson}
-                        </div>
-                        <div className="mt-1 flex items-center gap-2 truncate text-xs text-slate-500 dark:text-slate-400">
-                          <Mail size={14} className="shrink-0" />
-                          <span className="truncate">{row.workEmail}</span>
-                        </div>
+                      <div className="flex items-center gap-2 truncate text-xs text-slate-500 dark:text-slate-400">
+                        <Mail size={14} className="shrink-0 text-slate-400" />
+                        <span className="truncate">{row.workEmail || "N/A"}</span>
                       </div>
                     </div>
                   </td>
                   <td className="px-5 py-4">
                     <div className="flex items-center gap-2 text-sm font-semibold text-slate-900 dark:text-slate-100">
-                      <BriefcaseBusiness size={16} className="text-slate-400 dark:text-slate-500" />
-                      <span className="truncate">{row.jobTitle}</span>
+                      <Building2 size={16} className="text-slate-400 dark:text-slate-500 shrink-0" />
+                      <span className="truncate">{row.organizationName || "N/A"}</span>
                     </div>
                   </td>
                   <td className="px-5 py-4">
-                    <div className="flex items-start gap-2">
-                      <Building2 size={16} className="mt-0.5 text-slate-400 dark:text-slate-500" />
-                      <div className="min-w-0">
-                        <div className="truncate text-sm font-semibold text-slate-900 dark:text-slate-100">
-                          {row.organizationName}
-                        </div>
-                        <div className="mt-1 flex items-center gap-2 truncate text-xs text-slate-500 dark:text-slate-400">
-                          <MapPin size={14} className="shrink-0" />
-                          <span className="truncate">{row.localAuthority || "—"}</span>
-                        </div>
-                      </div>
+                    <div className="flex items-center gap-2 text-sm font-semibold text-slate-900 dark:text-slate-100">
+                      <BriefcaseBusiness size={16} className="text-slate-400 dark:text-slate-500 shrink-0" />
+                      <span className="truncate">{row.jobTitle || "N/A"}</span>
                     </div>
                   </td>
                   <td className="px-5 py-4">
-                    <div className="text-sm font-medium text-slate-700 dark:text-slate-300">
-                      {optionLabel(row.phase) || "—"}
-                    </div>
-                  </td>
-                  <td className="px-5 py-4">
-                    <div className="text-sm font-medium text-slate-700 dark:text-slate-300">
-                      {row.town || "—"}
-                    </div>
+                    {row.localAuthority ? (
+                      <span className="inline-flex items-center rounded-lg bg-blue-50 px-2.5 py-1 text-xs font-bold uppercase tracking-wider text-blue-600 dark:bg-blue-900/30 dark:text-blue-400">
+                        {row.localAuthority}
+                      </span>
+                    ) : (
+                      <span className="text-slate-500">—</span>
+                    )}
                   </td>
                   <td className="px-5 py-4">
                     <div className="flex items-center justify-end gap-2">
+                      <Link
+                        href={`/contact/${row.id}`}
+                        className="inline-flex cursor-pointer items-center justify-center p-2 text-slate-400 transition-colors hover:text-slate-700 dark:hover:text-slate-200"
+                        aria-label={`View ${row.contactPerson}`}
+                      >
+                        <Eye size={16} />
+                      </Link>
                       <button
                         type="button"
                         onClick={() => openEdit(row)}
-                        className="inline-flex cursor-pointer items-center justify-center rounded-xl border border-slate-200 bg-white p-2.5 text-slate-700 transition-colors hover:bg-primary hover:text-primary-foreground dark:border-slate-800 dark:bg-slate-950 dark:text-slate-200 dark:hover:bg-primary dark:hover:text-primary-foreground"
+                        className="inline-flex cursor-pointer items-center justify-center p-2 text-slate-400 transition-colors hover:text-primary"
                         aria-label={`Edit ${row.contactPerson}`}
                       >
-                        <Pencil size={18} />
+                        <Pencil size={16} />
                       </button>
                       <button
                         type="button"
                         onClick={() => openDeleteModal(row)}
-                        className="inline-flex cursor-pointer items-center justify-center rounded-xl border border-rose-200 bg-rose-50 p-2.5 text-rose-700 transition-colors hover:bg-rose-100 dark:border-rose-900/40 dark:bg-rose-950/25 dark:text-rose-200 dark:hover:bg-rose-950/40"
+                        className="inline-flex cursor-pointer items-center justify-center p-2 text-slate-400 transition-colors hover:text-rose-600"
                         aria-label={`Delete ${row.contactPerson}`}
                       >
-                        <Trash2 size={18} />
+                        <Trash2 size={16} />
                       </button>
                     </div>
                   </td>
+
                 </tr>
               ))}
-              {!filtered.length ? (
+              {!importContactsQuery.isLoading && !importContactsQuery.isError && !filtered.length ? (
                 <tr>
                   <td colSpan={6} className="px-5 py-10 text-center text-sm text-slate-600 dark:text-slate-400">
                     No contacts found. Try a different search.
@@ -809,37 +862,6 @@ export default function ContactPage() {
               ) : null}
             </tbody>
           </table>
-        </div>
-      </div>
-
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-        <div className="text-sm text-slate-600 dark:text-slate-400">
-          Page{" "}
-          <span className="font-semibold text-slate-900 dark:text-slate-100">
-            {meta.page}
-          </span>{" "}
-          of{" "}
-          <span className="font-semibold text-slate-900 dark:text-slate-100">
-            {meta.totalPage}
-          </span>
-        </div>
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            disabled={meta.page <= 1 || importContactsQuery.isFetching}
-            onClick={() => setPage((p) => Math.max(1, p - 1))}
-            className="inline-flex h-10 items-center justify-center rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-800 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-55 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:hover:bg-slate-900"
-          >
-            Prev
-          </button>
-          <button
-            type="button"
-            disabled={meta.page >= meta.totalPage || importContactsQuery.isFetching}
-            onClick={() => setPage((p) => Math.min(meta.totalPage || 1, p + 1))}
-            className="inline-flex h-10 items-center justify-center rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-800 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-55 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:hover:bg-slate-900"
-          >
-            Next
-          </button>
         </div>
       </div>
 
