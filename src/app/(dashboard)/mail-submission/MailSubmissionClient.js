@@ -275,6 +275,12 @@ export default function MailSubmissionClient() {
   const [localAuthority, setLocalAuthority] = useState("All Authorities");
   const [gender, setGender] = useState("All Genders");
   const [town, setTown] = useState("All Towns");
+  const [page, setPage] = useState(1);
+  const [limit, setLimit] = useState(200);
+
+  useEffect(() => {
+    setPage(1);
+  }, [keyword, location, jobTitle, phase, radius, localAuthority, gender, town]);
 
   useEffect(() => {
     const t = setTimeout(() => setDebouncedKeyword(keyword.trim()), 400);
@@ -319,9 +325,11 @@ export default function MailSubmissionClient() {
   );
 
   const localAuthorities = useMemo(() => {
-    const list = Array.isArray(importContactFiltersQuery.data?.localAuthorities)
-      ? importContactFiltersQuery.data.localAuthorities.filter(Boolean)
-      : [];
+    const list = Array.isArray(importContactFiltersQuery.data?.authorities)
+      ? importContactFiltersQuery.data.authorities.filter(Boolean)
+      : Array.isArray(importContactFiltersQuery.data?.localAuthorities)
+        ? importContactFiltersQuery.data.localAuthorities.filter(Boolean)
+        : [];
     return ["All Authorities", ...list.map(String)];
   }, [importContactFiltersQuery.data]);
 
@@ -373,36 +381,38 @@ export default function MailSubmissionClient() {
       localAuthority,
       gender,
       town,
+      page,
+      limit,
     ],
     queryFn: async () => {
-      const params = { page: 1, limit: MAIL_QUEUE_LIMIT };
+      const params = { page, limit };
       const gcv = effectiveGeneratedCvId.trim();
       if (gcv) params.generatedCvId = gcv;
 
       const term = debouncedKeyword.trim();
       if (term) params.searchTerm = term;
 
-      if (location !== "All Locations" && String(location).trim()) {
-        params.region = String(location).trim();
+      if (location !== "All Locations" && String(location)) {
+        params.region = String(location);
       }
-      if (jobTitle !== "All Job Titles" && String(jobTitle).trim()) {
-        params.jobTitle = String(jobTitle).trim();
+      if (jobTitle !== "All Job Titles" && String(jobTitle)) {
+        params.jobs = String(jobTitle);
       }
-      if (phase !== "All Phases" && String(phase).trim()) {
-        params.phase = String(phase).trim();
+      if (phase !== "All Phases" && String(phase)) {
+        params.phase = String(phase);
       }
       if (radius !== "All Radius Data") {
         const n = Number(radius);
         if (!Number.isNaN(n)) params.radius = n * 1000;
       }
-      if (localAuthority !== "All Authorities" && String(localAuthority).trim()) {
-        params.localAuthority = String(localAuthority).trim();
+      if (localAuthority !== "All Authorities" && String(localAuthority)) {
+        params.localAuthority = String(localAuthority);
       }
-      if (gender !== "All Genders" && String(gender).trim()) {
-        params.gender = String(gender).trim();
+      if (gender !== "All Genders" && String(gender)) {
+        params.gender = String(gender);
       }
-      if (town !== "All Towns" && String(town).trim()) {
-        params.towns = String(town).trim();
+      if (town !== "All Towns" && String(town)) {
+        params.towns = String(town);
       }
 
       console.log("---- API Query Params ----", params);
@@ -418,11 +428,26 @@ export default function MailSubmissionClient() {
         : Array.isArray(payload?.items)
           ? payload.items
           : [];
-      return items.map(mapMailQueueContactRow).filter((r) => r.id);
+      const meta = payload?.meta || {};
+      return {
+        items: items.map(mapMailQueueContactRow).filter((r) => r.id),
+        meta: {
+          page: Number(meta.page || page || 1),
+          limit: Number(meta.limit || limit || 200),
+          total: Number(meta.total || items.length || 0),
+          totalPage: Number(meta.totalPage || 1),
+        },
+      };
     },
   });
 
-  const rows = importContactsQuery.data ?? EMPTY_MAIL_ROWS;
+  const rows = importContactsQuery.data?.items ?? EMPTY_MAIL_ROWS;
+  const meta = importContactsQuery.data?.meta ?? {
+    page,
+    limit,
+    total: 0,
+    totalPage: 1,
+  };
 
   useEffect(() => {
     const idSet = new Set(rows.map((r) => String(r.id ?? "")));
@@ -526,6 +551,17 @@ export default function MailSubmissionClient() {
     return "h-11 w-full cursor-pointer rounded-xl border border-sky-200 bg-white px-3 text-sm text-slate-900 outline-none focus:ring-2 focus:ring-primary/30 dark:border-sky-900/40 dark:bg-slate-950 dark:text-slate-100 dark:focus:ring-primary/40";
   }
 
+  const activeFiltersCount = [
+    keyword.trim() !== "",
+    location !== "All Locations",
+    jobTitle !== "All Job Titles",
+    phase !== "All Phases",
+    radius !== "All Radius Data",
+    localAuthority !== "All Authorities",
+    gender !== "All Genders",
+    town !== "All Towns",
+  ].filter(Boolean).length;
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
@@ -550,11 +586,16 @@ export default function MailSubmissionClient() {
       </div>
 
       <div className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-950">
-        <div className="text-xs font-semibold uppercase tracking-wide text-black/60 dark:text-slate-400">
-          Search & filter audience
+        <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-black/60 dark:text-slate-400">
+          <span>Search & filter audience</span>
+          {activeFiltersCount > 0 && (
+            <span className="flex h-5 w-5 items-center justify-center rounded-full bg-primary/10 text-[10px] font-bold text-primary dark:bg-primary/20">
+              {activeFiltersCount}
+            </span>
+          )}
         </div>
 
-        <div className="mt-3 grid gap-3 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-8">
+        <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <div className="relative">
             <Search
               size={18}
@@ -650,6 +691,49 @@ export default function MailSubmissionClient() {
         </button>
       </div>
 
+      <div className="flex flex-col items-center justify-between gap-4 rounded-xl border border-primary/20 bg-primary/10 p-4 sm:flex-row dark:border-primary/20 dark:bg-primary/10">
+        <div className="flex items-center gap-3 text-sm text-slate-800 dark:text-slate-200">
+          <span className="font-medium">Items per page:</span>
+          <select
+            value={limit}
+            onChange={(e) => {
+              setLimit(Number(e.target.value));
+              setPage(1);
+            }}
+            className="cursor-pointer appearance-none rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 pr-8 font-medium text-slate-700 outline-none hover:bg-slate-100 focus:border-primary focus:ring-2 focus:ring-primary/20 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
+          >
+            {[100, 200, 500, 1000, 5000, 10000].map((val) => (
+              <option key={val} value={val}>
+                {val}
+              </option>
+            ))}
+          </select>
+          <span className="hidden font-medium sm:inline-block">Total {meta.total} records</span>
+        </div>
+
+        <div className="flex items-center gap-4 text-sm">
+          <span className="font-medium text-slate-800 dark:text-slate-200">
+            Page {meta.page} of {meta.totalPage}
+          </span>
+          <div className="flex gap-2">
+            <button
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+              disabled={meta.page <= 1 || importContactsQuery.isFetching}
+              className="rounded-lg border border-slate-200 bg-white px-4 py-1.5 font-medium text-slate-700 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+            >
+              Previous
+            </button>
+            <button
+              onClick={() => setPage((p) => Math.min(meta.totalPage, p + 1))}
+              disabled={meta.page >= meta.totalPage || importContactsQuery.isFetching}
+              className="rounded-lg border border-slate-200 bg-white px-4 py-1.5 font-medium text-slate-700 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+            >
+              Next
+            </button>
+          </div>
+        </div>
+      </div>
+
       {/* Desktop table */}
       <div className="hidden overflow-hidden rounded-2xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-950 md:block">
         <div className="overflow-x-auto">
@@ -661,7 +745,7 @@ export default function MailSubmissionClient() {
                 <th className="px-5 py-4 font-semibold">Email</th>
                 <th className="px-5 py-4 font-semibold">Organization Name</th>
                 <th className="px-5 py-4 font-semibold">Job Title</th>
-                <th className="px-5 py-4 font-semibold">Location</th>
+                <th className="px-5 py-4 font-semibold">Town</th>
                 <th className="px-5 py-4 font-semibold">Radius (KM)</th>
                 <th className="px-5 py-4 font-semibold">Phase</th>
               </tr>

@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import toast from "react-hot-toast";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import Link from "next/link";
 import {
   Download,
   Pencil,
@@ -10,6 +11,14 @@ import {
   Search,
   Trash2,
   Users,
+  Layers,
+  MapPin,
+  Shield,
+  ChevronDown,
+  Eye,
+  Building2,
+  Phone,
+  UserRound,
 } from "lucide-react";
 
 import {
@@ -33,7 +42,7 @@ const PHASES = [
   "16_plus",
 ];
 
-const GENDERS = ["boys", "girls", "mixed"];
+const GENDERS = ["Boys", "Girls", "Mixed"];
 
 function normalizePhase(v) {
   const s = String(v || "").trim().toLowerCase();
@@ -44,9 +53,11 @@ function normalizePhase(v) {
 function normalizeGender(v) {
   const s = String(v || "").trim().toLowerCase();
   if (!s) return "";
-  if (s === "male" || s === "m") return "boys";
-  if (s === "female" || s === "f") return "girls";
-  return s;
+  if (s === "male" || s === "m" || s === "boys") return "Boys";
+  if (s === "female" || s === "f" || s === "girls") return "Girls";
+  if (s === "mixed") return "Mixed";
+  // Fallback to title case for any other values
+  return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
 function mapImportOrgToRow(item) {
@@ -57,6 +68,7 @@ function mapImportOrgToRow(item) {
     name: d.OrganizationName ?? d.name ?? "",
     localAuthority: d.LocalAuthority ?? d.localAuthority ?? "",
     phase: normalizePhase(d.Phase ?? d.phase),
+    rawPhase: d.Phase ?? d.phase ?? "",
     gender: normalizeGender(d.Gender ?? d.gender),
     telephone: String(d.TelephoneNumber ?? d.telephone ?? ""),
     street: d.Street ?? d.street ?? "",
@@ -210,6 +222,7 @@ export default function OrganizationsPage() {
   const [gender, setGender] = useState("all");
   const [localAuthority, setLocalAuthority] = useState("all");
   const [page, setPage] = useState(1);
+  const [limit, setLimit] = useState(200);
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [dialogMode, setDialogMode] = useState("add"); // add | edit
@@ -231,15 +244,15 @@ export default function OrganizationsPage() {
   });
 
   const importOrgsQuery = useQuery({
-    queryKey: ["import-organization", "all", { q, phase, region, gender, localAuthority, page }],
+    queryKey: ["import-organization", "all", { q, phase, region, gender, localAuthority, page, limit }],
     queryFn: async () => {
       const params = {
         searchTerm: q?.trim() ? q.trim() : undefined,
         region: region === "all" ? undefined : region,
-        gender: gender === "all" ? undefined : optionLabel(gender),
-        phase: phase === "all" ? undefined : optionLabel(phase),
+        gender: gender === "all" ? undefined : gender,
+        phase: phase === "all" ? undefined : phase,
         localAuthority: localAuthority === "all" ? undefined : localAuthority,
-        limit: DEFAULT_LIMIT,
+        limit,
         page,
       };
       const res = await apiGet("/import-organization/all", { params });
@@ -271,7 +284,7 @@ export default function OrganizationsPage() {
   const rows = importOrgsQuery.data?.items || [];
   const meta = importOrgsQuery.data?.meta || {
     page,
-    limit: DEFAULT_LIMIT,
+    limit,
     total: rows.length,
     totalPage: 1,
   };
@@ -310,7 +323,7 @@ export default function OrganizationsPage() {
     );
 
     return {
-      phases: (phasesFromApi?.length ? phasesFromApi : PHASES).map((x) => normalizePhase(x)),
+      phases: (phasesFromApi?.length ? phasesFromApi : PHASES).map((x) => String(x)),
       genders: (gendersFromApi?.length ? gendersFromApi : GENDERS).map((x) => normalizeGender(x)),
       regions: (regionsFromApi?.length ? regionsFromApi : regions).map((x) => String(x)),
       localAuthorities: (lasFromApi?.length ? lasFromApi : authorities).map((x) => String(x)),
@@ -325,7 +338,7 @@ export default function OrganizationsPage() {
           .filter(Boolean)
           .some((x) => String(x).toLowerCase().includes(query))
         : true;
-      const phaseOk = phase === "all" ? true : r.phase === phase;
+      const phaseOk = phase === "all" ? true : r.rawPhase === phase;
       const regionOk = region === "all" ? true : r.region === region;
       const genderOk = gender === "all" ? true : r.gender === gender;
       const laOk = localAuthority === "all" ? true : r.localAuthority === localAuthority;
@@ -592,57 +605,116 @@ export default function OrganizationsPage() {
             />
           </div>
 
-          <select
-            value={phase}
-            onChange={(e) => setPhase(e.target.value)}
-            className="h-12 w-full cursor-pointer rounded-xl border border-slate-200 bg-white px-4 pr-10 text-base text-slate-900 outline-none focus:ring-2 focus:ring-primary/30 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:focus:ring-primary/40"
-          >
-            <option value="all">All Phases</option>
-            {filterOptions.phases.map((p) => (
-              <option key={p} value={p}>
-                {optionLabel(p)}
-              </option>
-            ))}
-          </select>
+          <div className="relative">
+            <Layers size={18} className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-slate-500 dark:text-slate-400" />
+            <select
+              value={phase}
+              onChange={(e) => setPhase(e.target.value)}
+              className="h-12 w-full appearance-none cursor-pointer rounded-xl border border-slate-200 bg-white pl-11 pr-10 text-base text-slate-900 outline-none focus:ring-2 focus:ring-primary/30 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:focus:ring-primary/40"
+            >
+              <option value="all">All Phases</option>
+              {filterOptions.phases.map((p) => (
+                <option key={p} value={p}>
+                  {p}
+                </option>
+              ))}
+            </select>
+            <ChevronDown size={18} className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-slate-400" />
+          </div>
 
-          <select
-            value={region}
-            onChange={(e) => setRegion(e.target.value)}
-            className="h-12 w-full cursor-pointer rounded-xl border border-slate-200 bg-white px-4 pr-10 text-base text-slate-900 outline-none focus:ring-2 focus:ring-primary/30 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:focus:ring-primary/40"
-          >
-            <option value="all">All Regions</option>
-            {filterOptions.regions.map((r) => (
-              <option key={r} value={r}>
-                {r}
-              </option>
-            ))}
-          </select>
+          <div className="relative">
+            <MapPin size={18} className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-slate-500 dark:text-slate-400" />
+            <select
+              value={region}
+              onChange={(e) => setRegion(e.target.value)}
+              className="h-12 w-full appearance-none cursor-pointer rounded-xl border border-slate-200 bg-white pl-11 pr-10 text-base text-slate-900 outline-none focus:ring-2 focus:ring-primary/30 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:focus:ring-primary/40"
+            >
+              <option value="all">All Towns</option>
+              {filterOptions.regions.map((r) => (
+                <option key={r} value={r}>
+                  {r}
+                </option>
+              ))}
+            </select>
+            <ChevronDown size={18} className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-slate-400" />
+          </div>
 
-          <select
-            value={gender}
-            onChange={(e) => setGender(e.target.value)}
-            className="h-12 w-full cursor-pointer rounded-xl border border-slate-200 bg-white px-4 pr-10 text-base text-slate-900 outline-none focus:ring-2 focus:ring-primary/30 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:focus:ring-primary/40"
-          >
-            <option value="all">All Genders</option>
-            {filterOptions.genders.map((g) => (
-              <option key={g} value={g}>
-                {optionLabel(g)}
-              </option>
-            ))}
-          </select>
+          <div className="relative">
+            <UserRound size={18} className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-slate-500 dark:text-slate-400" />
+            <select
+              value={gender}
+              onChange={(e) => setGender(e.target.value)}
+              className="h-12 w-full appearance-none cursor-pointer rounded-xl border border-slate-200 bg-white pl-11 pr-10 text-base text-slate-900 outline-none focus:ring-2 focus:ring-primary/30 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:focus:ring-primary/40"
+            >
+              <option value="all">All Genders</option>
+              {filterOptions.genders.map((g) => (
+                <option key={g} value={g}>
+                  {optionLabel(g)}
+                </option>
+              ))}
+            </select>
+            <ChevronDown size={18} className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-slate-400" />
+          </div>
 
+          <div className="relative">
+            <Shield size={18} className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-slate-500 dark:text-slate-400" />
+            <select
+              value={localAuthority}
+              onChange={(e) => setLocalAuthority(e.target.value)}
+              className="h-12 w-full appearance-none cursor-pointer rounded-xl border border-slate-200 bg-white pl-11 pr-10 text-base text-slate-900 outline-none focus:ring-2 focus:ring-primary/30 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:focus:ring-primary/40"
+            >
+              <option value="all">All Local Authority</option>
+              {filterOptions.localAuthorities.map((a) => (
+                <option key={a} value={a}>
+                  {a}
+                </option>
+              ))}
+            </select>
+            <ChevronDown size={18} className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-slate-400" />
+          </div>
+        </div>
+      </div>
+
+      <div className="flex flex-col items-center justify-between gap-4 rounded-xl border border-primary/20 bg-primary/10 p-4 sm:flex-row dark:border-primary/20 dark:bg-primary/10">
+        <div className="flex items-center gap-3 text-sm text-slate-800 dark:text-slate-200">
+          <span className="font-medium">Items per page:</span>
           <select
-            value={localAuthority}
-            onChange={(e) => setLocalAuthority(e.target.value)}
-            className="h-12 w-full cursor-pointer rounded-xl border border-slate-200 bg-white px-4 pr-10 text-base text-slate-900 outline-none focus:ring-2 focus:ring-primary/30 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:focus:ring-primary/40"
+            value={limit}
+            onChange={(e) => {
+              setLimit(Number(e.target.value));
+              setPage(1);
+            }}
+            className="cursor-pointer appearance-none rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 pr-8 font-medium text-slate-700 outline-none hover:bg-slate-100 focus:border-primary focus:ring-2 focus:ring-primary/20 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
           >
-            <option value="all">All Local Authority</option>
-            {filterOptions.localAuthorities.map((a) => (
-              <option key={a} value={a}>
-                {a}
+            {[100, 200, 500, 1000, 5000, 10000].map((val) => (
+              <option key={val} value={val}>
+                {val}
               </option>
             ))}
           </select>
+          <span className="hidden font-medium sm:inline-block">Total {meta.total} records</span>
+        </div>
+
+        <div className="flex items-center gap-4 text-sm">
+          <span className="font-medium text-slate-800 dark:text-slate-200">
+            Page {meta.page} of {meta.totalPage}
+          </span>
+          <div className="flex gap-2">
+            <button
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+              disabled={meta.page <= 1 || importOrgsQuery.isFetching}
+              className="rounded-lg border border-slate-200 bg-white px-4 py-1.5 font-medium text-slate-700 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+            >
+              Previous
+            </button>
+            <button
+              onClick={() => setPage((p) => Math.min(meta.totalPage, p + 1))}
+              disabled={meta.page >= meta.totalPage || importOrgsQuery.isFetching}
+              className="rounded-lg border border-slate-200 bg-white px-4 py-1.5 font-medium text-slate-700 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+            >
+              Next
+            </button>
+          </div>
         </div>
       </div>
 
@@ -652,10 +724,11 @@ export default function OrganizationsPage() {
           <table className="min-w-full text-left">
             <thead className="bg-slate-50 text-xs font-semibold tracking-wide text-slate-700 dark:bg-slate-900 dark:text-slate-200">
               <tr>
-                <th className="px-5 py-4">NAME & LOCAL AUTHORITY</th>
-                <th className="px-5 py-4">URN & PHASE</th>
+                <th className="px-5 py-4">ORGANIZATION NAME</th>
                 <th className="px-5 py-4">CONTACT & GENDER</th>
                 <th className="px-5 py-4">LOCATION & POSTCODE</th>
+                <th className="px-5 py-4">URN & PHASE</th>
+                <th className="px-5 py-4">LOCAL AUTHORITY</th>
                 <th className="px-5 py-4 text-right">ACTIONS</th>
               </tr>
             </thead>
@@ -682,67 +755,84 @@ export default function OrganizationsPage() {
               {filtered.map((row) => (
                 <tr key={row.id} className="hover:bg-slate-100/70 dark:hover:bg-slate-900/40">
                   <td className="px-5 py-4">
-                    <div className="flex items-start gap-3">
-                      <div className="mt-0.5 flex h-9 w-9 items-center justify-center rounded-xl bg-primary/10 text-primary dark:bg-primary/15 dark:text-primary">
-                        <Users size={18} />
+                    <div className="flex items-center gap-3">
+                      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400">
+                        <Building2 size={16} />
                       </div>
                       <div className="min-w-0">
                         <div className="truncate text-sm font-semibold text-slate-900 dark:text-slate-100">
                           {row.name}
                         </div>
-                        <div className="mt-1 truncate text-xs text-slate-500 dark:text-slate-400">
-                          {row.localAuthority || "—"}
-                        </div>
+                      </div>
+                    </div>
+                  </td>
+                  <td className="px-5 py-4">
+                    <div className="flex flex-col gap-1.5">
+                      <div className="flex items-center gap-2 text-xs text-slate-600 dark:text-slate-400">
+                        <Phone size={14} className="text-slate-400" /> {row.telephone || "N/A"}
+                      </div>
+                      <div className="flex items-center gap-2 text-xs text-slate-600 dark:text-slate-400">
+                        <UserRound size={14} className="text-slate-400" /> {row.gender ? optionLabel(row.gender) : "—"}
                       </div>
                     </div>
                   </td>
                   <td className="px-5 py-4">
                     <div className="text-sm font-semibold text-slate-900 dark:text-slate-100">
-                      {row.urn || "—"}
-                    </div>
-                    <div className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-                      {row.phase ? optionLabel(row.phase) : "—"}
-                    </div>
-                  </td>
-                  <td className="px-5 py-4">
-                    <div className="text-sm font-semibold text-slate-900 dark:text-slate-100">
-                      {row.telephone || "—"}
-                    </div>
-                    <div className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-                      {row.gender ? optionLabel(row.gender) : "—"}
-                    </div>
-                  </td>
-                  <td className="px-5 py-4">
-                    <div className="text-sm font-semibold text-slate-900 dark:text-slate-100">
-                      {row.town || "—"}
+                      {row.town || "N/A"}
                     </div>
                     <div className="mt-1 text-xs text-slate-500 dark:text-slate-400">
                       {row.postcode || "—"}
                     </div>
                   </td>
                   <td className="px-5 py-4">
+                    <div className="flex flex-col gap-1.5">
+                      <div className="flex items-center gap-2 text-xs text-slate-600 dark:text-slate-400">
+                        <span className="text-slate-400 font-medium">#</span> {row.urn || "—"}
+                      </div>
+                      <div className="flex items-center gap-2 text-xs text-slate-600 dark:text-slate-400">
+                        <Layers size={14} className="text-slate-400" /> {row.phase ? optionLabel(row.phase) : "—"}
+                      </div>
+                    </div>
+                  </td>
+                  <td className="px-5 py-4">
+                    {row.localAuthority ? (
+                      <span className="inline-flex items-center rounded-lg bg-blue-50 px-2.5 py-1 text-xs font-bold uppercase tracking-wider text-blue-600 dark:bg-blue-900/30 dark:text-blue-400">
+                        {row.localAuthority}
+                      </span>
+                    ) : (
+                      <span className="text-slate-500">—</span>
+                    )}
+                  </td>
+                  <td className="px-5 py-4">
                     <div className="flex items-center justify-end gap-2">
+                      <Link
+                        href={`/organizations/${row.id}`}
+                        className="inline-flex cursor-pointer items-center justify-center p-2 text-slate-400 transition-colors hover:text-slate-700 dark:hover:text-slate-200"
+                        aria-label={`View ${row.name}`}
+                      >
+                        <Eye size={16} />
+                      </Link>
                       <button
                         type="button"
                         onClick={() => openEdit(row)}
-                        className="inline-flex cursor-pointer items-center justify-center rounded-xl border border-slate-200 bg-white p-2.5 text-slate-700 transition-colors hover:bg-primary hover:text-primary-foreground dark:border-slate-800 dark:bg-slate-950 dark:text-slate-200 dark:hover:bg-primary dark:hover:text-primary-foreground"
+                        className="inline-flex cursor-pointer items-center justify-center p-2 text-slate-400 transition-colors hover:text-primary"
                         aria-label={`Edit ${row.name}`}
                       >
-                        <Pencil size={18} />
+                        <Pencil size={16} />
                       </button>
                       <button
                         type="button"
                         onClick={() => openDeleteModal(row)}
-                        className="inline-flex cursor-pointer items-center justify-center rounded-xl border border-rose-200 bg-rose-50 p-2.5 text-rose-700 transition-colors hover:bg-rose-100 dark:border-rose-900/40 dark:bg-rose-950/25 dark:text-rose-200 dark:hover:bg-rose-950/40"
+                        className="inline-flex cursor-pointer items-center justify-center p-2 text-slate-400 transition-colors hover:text-rose-600"
                         aria-label={`Delete ${row.name}`}
                       >
-                        <Trash2 size={18} />
+                        <Trash2 size={16} />
                       </button>
                     </div>
                   </td>
                 </tr>
               ))}
-              {!filtered.length ? (
+              {!importOrgsQuery.isLoading && !importOrgsQuery.isError && !filtered.length ? (
                 <tr>
                   <td colSpan={5} className="px-5 py-10 text-center text-sm text-slate-600 dark:text-slate-400">
                     No organizations found. Try different filters.
@@ -751,37 +841,6 @@ export default function OrganizationsPage() {
               ) : null}
             </tbody>
           </table>
-        </div>
-      </div>
-
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-        <div className="text-sm text-slate-600 dark:text-slate-400">
-          Page{" "}
-          <span className="font-semibold text-slate-900 dark:text-slate-100">
-            {meta.page}
-          </span>{" "}
-          of{" "}
-          <span className="font-semibold text-slate-900 dark:text-slate-100">
-            {meta.totalPage}
-          </span>
-        </div>
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            disabled={meta.page <= 1 || importOrgsQuery.isFetching}
-            onClick={() => setPage((p) => Math.max(1, p - 1))}
-            className="inline-flex h-10 items-center justify-center rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-800 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-55 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:hover:bg-slate-900"
-          >
-            Prev
-          </button>
-          <button
-            type="button"
-            disabled={meta.page >= meta.totalPage || importOrgsQuery.isFetching}
-            onClick={() => setPage((p) => Math.min(meta.totalPage || 1, p + 1))}
-            className="inline-flex h-10 items-center justify-center rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-800 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-55 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:hover:bg-slate-900"
-          >
-            Next
-          </button>
         </div>
       </div>
 

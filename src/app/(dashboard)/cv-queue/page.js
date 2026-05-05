@@ -19,14 +19,6 @@ import {
   Wand2,
 } from "lucide-react";
 
-import {
-  Dialog,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-
 import { apiDelete, apiGet, apiPatch, apiPost } from "@/lib/api";
 
 const TABS = [
@@ -323,10 +315,6 @@ export default function CvQueuePage() {
   const [q, setQ] = useState("");
   const [availabilityFilter, setAvailabilityFilter] = useState("all");
   const [minScore, setMinScore] = useState("");
-  const [profileOpen, setProfileOpen] = useState(false);
-  const [editMode, setEditMode] = useState(false);
-  const [selectedId, setSelectedId] = useState(null);
-  const [draft, setDraft] = useState(null);
   const [generatingIds, setGeneratingIds] = useState({});
 
   const qualityChecksQuery = useQuery({
@@ -506,10 +494,7 @@ export default function CvQueuePage() {
   }
 
   function openProfile(row) {
-    setSelectedId(row.id);
-    setDraft({ ...row });
-    setEditMode(false);
-    setProfileOpen(true);
+    router.push(`/cv-queue/${row.id}`);
   }
 
   function viewCv(rowOrUrl) {
@@ -525,65 +510,7 @@ export default function CvQueuePage() {
     // if (!win) toast.error("Popup blocked. Allow popups to view the CV.");
   }
 
-  async function onDelete() {
-    if (!draft?.id) return;
-    if (deleteQualityCheckMutation.isPending) return;
 
-    const name = draft?.name || "this CV";
-    const id = draft.id;
-
-    const prevRows = rows;
-    setRows((prev) => prev.filter((r) => r.id !== id));
-    setProfileOpen(false);
-
-    deleteQualityCheckMutation.mutate(id, {
-      onSuccess: () => {
-        toast.success("Deleted successfully");
-      },
-      onError: (err) => {
-        setRows(prevRows);
-        toast.error(err?.message || "Delete failed");
-      },
-    });
-  }
-
-  function onSave() {
-    if (!draft?.id) return;
-    const prevRow = rows.find((r) => r.id === draft.id);
-    const nextRow = { ...(prevRow || {}), ...draft };
-
-    // Optimistic update
-    setRows((prev) => prev.map((r) => (r.id === draft.id ? nextRow : r)));
-
-    updateQualityCheckMutation.mutate(
-      { id: draft.id, payload: buildPayloadFromRow(nextRow) },
-      {
-        onSuccess: (updated) => {
-          // If backend returns full updated entity, sync from it. Otherwise keep optimistic row.
-          if (updated && (updated?.candidate || updated?.id)) {
-            const mapped = mapQualityCheckToRow(updated);
-            mapped.skills = mergeSkills({
-              prevSkills: prevRow?.skills,
-              nextSkills: nextRow?.skills,
-              mappedSkills: mapped?.skills,
-              preferNext: true,
-            });
-            setRows((prev) => prev.map((r) => (r.id === draft.id ? mapped : r)));
-            setDraft(mapped);
-          }
-          setEditMode(false);
-          toast.success("Saved changes");
-        },
-        onError: (err) => {
-          if (prevRow) {
-            setRows((prev) => prev.map((r) => (r.id === draft.id ? prevRow : r)));
-            setDraft(prevRow);
-          }
-          toast.error(err?.message || "Save failed");
-        },
-      }
-    );
-  }
 
   function persistRowPatch(id, patch, changedKeys, successMessage) {
     const prevRow = rows.find((r) => r.id === id);
@@ -593,7 +520,6 @@ export default function CvQueuePage() {
 
     // Optimistic update
     setRows((prev) => prev.map((r) => (r.id === id ? nextRow : r)));
-    if (draft?.id === id) setDraft(nextRow);
 
     updateQualityCheckMutation.mutate(
       { id, payload },
@@ -608,13 +534,11 @@ export default function CvQueuePage() {
               mappedSkills: mapped?.skills,
             });
             setRows((prev) => prev.map((r) => (r.id === id ? mapped : r)));
-            if (draft?.id === id) setDraft(mapped);
           }
           if (successMessage) toast.success(successMessage);
         },
         onError: (err) => {
           setRows((prev) => prev.map((r) => (r.id === id ? prevRow : r)));
-          if (draft?.id === id) setDraft(prevRow);
           toast.error(err?.message || "Update failed");
         },
       }
@@ -626,12 +550,7 @@ export default function CvQueuePage() {
     setRows((prev) => prev.map((r) => (r.id === id ? { ...r, ...patch } : r)));
   }
 
-  const selected = useMemo(() => {
-    if (!selectedId) return null;
-    return rows.find((r) => r.id === selectedId) || null;
-  }, [rows, selectedId]);
 
-  const form = draft || selected;
 
   return (
     <div className="space-y-6">
@@ -840,8 +759,8 @@ export default function CvQueuePage() {
                     </select>
                   </td>
                   <td className="px-5 py-4">
-                    <div className="flex w-full min-w-[200px] max-w-md flex-nowrap items-center justify-between gap-3">
-                      <div className="min-w-0">
+                    <div className="flex flex-nowrap items-center gap-3">
+                      <div className="shrink-0">
                         {row?.aiGenerated ? (
                           <button
                             type="button"
@@ -1031,350 +950,6 @@ export default function CvQueuePage() {
           </div>
         ) : null}
       </div>
-
-      <Dialog open={profileOpen} onOpenChange={setProfileOpen}>
-        <DialogContent
-          className="sm:max-w-5xl max-h-[85vh] overflow-y-auto"
-          showCloseButton
-        >
-          <DialogHeader className="sticky top-0 z-10 bg-white/95 backdrop-blur dark:bg-slate-950/95">
-            <DialogTitle className="text-2xl text-black dark:text-slate-100">
-              Candidate Profile
-            </DialogTitle>
-          </DialogHeader>
-
-          {!form ? (
-            <div className="text-base text-black/60 dark:text-slate-400">
-              No candidate selected.
-            </div>
-          ) : (
-            <div className="space-y-5">
-              <div className="rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-950">
-                <div className="flex flex-col gap-5 md:flex-row md:items-center md:justify-between">
-                  <div className="flex items-start gap-4">
-                    <div className="min-w-0">
-                      {!editMode ? (
-                        <>
-                          <div className="truncate text-2xl font-semibold text-black dark:text-slate-100">
-                            {na(form.name)}
-                          </div>
-                          <div className="mt-1 text-base font-medium text-primary dark:text-primary">
-                            {na(form.role)}
-                          </div>
-                        </>
-                      ) : (
-                        <>
-                          <label className="text-xs font-medium text-black/60 dark:text-slate-400">
-                            Name
-                          </label>
-                          <input
-                            value={draft?.name || ""}
-                            onChange={(e) =>
-                              setDraft((d) => ({ ...d, name: e.target.value }))
-                            }
-                            className="mt-1 h-12 w-full max-w-md rounded-xl border border-slate-200 bg-white px-3 text-base text-slate-900 outline-none focus:ring-2 focus:ring-primary/30 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:focus:ring-primary/40"
-                          />
-                          <label className="mt-3 block text-xs font-medium text-black/60 dark:text-slate-400">
-                            Role
-                          </label>
-                          <input
-                            value={draft?.role || ""}
-                            onChange={(e) =>
-                              setDraft((d) => ({ ...d, role: e.target.value }))
-                            }
-                            className="mt-1 h-12 w-full max-w-md rounded-xl border border-slate-200 bg-white px-3 text-base text-slate-900 outline-none focus:ring-2 focus:ring-primary/30 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:focus:ring-primary/40"
-                          />
-                        </>
-                      )}
-
-                      <div className="mt-3 flex flex-wrap items-center gap-2">
-                        {!editMode ? (
-                          <>
-                            <span
-                              className={[
-                                "inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-medium",
-                                statusPillClasses(form.status),
-                              ].join(" ")}
-                            >
-                              {statusLabel(form.status)}
-                            </span>
-                            <span
-                              className={[
-                                "inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-medium",
-                                availabilityPillClasses(form.availability),
-                              ].join(" ")}
-                            >
-                              {form.availability}
-                            </span>
-                          </>
-                        ) : (
-                          <div className="grid w-full gap-3 sm:grid-cols-2">
-                            <div className="space-y-1">
-                              <label className="text-xs font-medium text-black/60 dark:text-slate-400">
-                                Quality
-                              </label>
-                              <select
-                                value={draft?.status || "passed"}
-                                onChange={(e) =>
-                                  setDraft((d) => ({ ...d, status: e.target.value }))
-                                }
-                                className="h-11 w-full cursor-pointer rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none focus:ring-2 focus:ring-primary/30 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:focus:ring-primary/40"
-                              >
-                                <option value="passed">Quality Passed</option>
-                                <option value="failed">Quality Failed</option>
-                              </select>
-                            </div>
-                            <div className="space-y-1">
-                              <label className="text-xs font-medium text-black/60 dark:text-slate-400">
-                                Availability
-                              </label>
-                              <select
-                                value={draft?.availability || "Available"}
-                                onChange={(e) =>
-                                  setDraft((d) => ({
-                                    ...d,
-                                    availability: e.target.value,
-                                  }))
-                                }
-                                className="h-11 w-full cursor-pointer rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none focus:ring-2 focus:ring-primary/30 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:focus:ring-primary/40"
-                              >
-                                <option value="Available">Available</option>
-                                <option value="Not available">Not available</option>
-                              </select>
-                            </div>
-                          </div>
-                        )}
-                      </div>
-
-                      <div className="mt-4 grid gap-2 text-sm text-black/70 dark:text-slate-300 sm:grid-cols-3">
-                        <div className="flex items-center gap-2">
-                          <MapPin size={16} className="text-black/50 dark:text-slate-400" />
-                          {!editMode ? (
-                            <span className="truncate">{na(form.location)}</span>
-                          ) : (
-                            <input
-                              value={draft?.location || ""}
-                              onChange={(e) =>
-                                setDraft((d) => ({ ...d, location: e.target.value }))
-                              }
-                              className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none focus:ring-2 focus:ring-primary/30 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:focus:ring-primary/40"
-                            />
-                          )}
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <UserRound size={16} className="text-black/50 dark:text-slate-400" />
-                          {!editMode ? (
-                            <span className="truncate">{na(form.experience)}</span>
-                          ) : (
-                            <input
-                              value={draft?.experience || ""}
-                              onChange={(e) =>
-                                setDraft((d) => ({ ...d, experience: e.target.value }))
-                              }
-                              className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none focus:ring-2 focus:ring-primary/30 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:focus:ring-primary/40"
-                            />
-                          )}
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <Mail size={16} className="text-black/50 dark:text-slate-400" />
-                          {!editMode ? (
-                            <span className="truncate">{na(form.email)}</span>
-                          ) : (
-                            <input
-                              value={draft?.email || ""}
-                              onChange={(e) =>
-                                setDraft((d) => ({ ...d, email: e.target.value }))
-                              }
-                              className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none focus:ring-2 focus:ring-primary/30 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:focus:ring-primary/40"
-                            />
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* actions moved to footer */}
-                </div>
-              </div>
-
-              <div className="grid gap-5 lg:grid-cols-2">
-                <div className="rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-950">
-                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                    <div className="text-lg font-semibold text-black dark:text-slate-100">
-                      Personal Information
-                    </div>
-                    {!editMode ? (
-                      <div className="flex items-center gap-2 text-sm text-black/60 dark:text-slate-400">
-                        <Phone size={16} /> {na(form.phone)}
-                      </div>
-                    ) : (
-                      <div className="w-full sm:max-w-xs">
-                        <label className="text-xs font-medium text-black/60 dark:text-slate-400">
-                          Phone number
-                        </label>
-                        <input
-                          value={draft?.phone || ""}
-                          onChange={(e) =>
-                            setDraft((d) => ({ ...d, phone: e.target.value }))
-                          }
-                          className="mt-1 h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none focus:ring-2 focus:ring-primary/30 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:focus:ring-primary/40"
-                        />
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="mt-4 space-y-3">
-                    <div className="text-sm font-medium text-black/70 dark:text-slate-300">
-                      Bio
-                    </div>
-                    {!editMode ? (
-                      <div className="text-sm leading-relaxed text-black/70 dark:text-slate-300">
-                        {truncateWords(form.bio, 200)}
-                      </div>
-                    ) : (
-                      <textarea
-                        value={draft?.bio || ""}
-                        onChange={(e) =>
-                          setDraft((d) => ({ ...d, bio: e.target.value }))
-                        }
-                        rows={6}
-                        className="w-full rounded-xl border border-slate-200 bg-white p-3 text-base text-slate-900 outline-none focus:ring-2 focus:ring-primary/30 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:focus:ring-primary/40"
-                      />
-                    )}
-                  </div>
-                </div>
-
-                <div className="rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-950">
-                  <div className="text-lg font-semibold text-black dark:text-slate-100">
-                    Technical Expertise
-                  </div>
-
-                  {!editMode ? (
-                    <div className="mt-4 flex flex-wrap gap-2">
-                      {Array.isArray(form.skills) && form.skills.length ? (
-                        form.skills.map((s) => (
-                          <span
-                            key={s}
-                            className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-medium text-slate-800 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100"
-                          >
-                            {s}
-                          </span>
-                        ))
-                      ) : (
-                        <span className="text-sm text-black/60 dark:text-slate-400">
-                          N/A
-                        </span>
-                      )}
-                    </div>
-                  ) : (
-                    <div className="mt-4 space-y-2">
-                      <div className="text-sm text-black/60 dark:text-slate-400">
-                        Edit skills (comma separated)
-                      </div>
-                      <input
-                        value={(draft?.skills || []).join(", ")}
-                        onChange={(e) =>
-                          setDraft((d) => ({
-                            ...d,
-                            skills: e.target.value
-                              .split(",")
-                              .map((x) => x.trim())
-                              .filter(Boolean),
-                          }))
-                        }
-                        className="h-12 w-full rounded-xl border border-slate-200 bg-white px-3 text-base text-slate-900 outline-none focus:ring-2 focus:ring-primary/30 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:focus:ring-primary/40"
-                        placeholder="Django, REST API, PostgreSQL"
-                      />
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-          )}
-
-          <DialogFooter className="flex flex-wrap justify-end gap-2 sm:gap-3">
-            {form ? (
-              <>
-                {form.aiGenerated ? (
-                  <>
-                    <button
-                      type="button"
-                      disabled={!!generatingIds[form.id]}
-                      onClick={() => viewAiGeneratedCv(form)}
-                      className="inline-flex cursor-pointer items-center justify-center gap-2 rounded-xl border border-violet-200 bg-gradient-to-b from-violet-50 to-white px-5 py-3 text-base font-semibold text-violet-900 shadow-sm transition hover:border-violet-300 disabled:cursor-not-allowed disabled:opacity-55 dark:border-violet-900/50 dark:from-violet-950/45 dark:to-slate-950 dark:text-violet-100"
-                    >
-                      <Sparkles size={18} />
-                      View AI Generated CV
-                    </button>
-                    <button
-                      type="button"
-                      disabled={!!generatingIds[form.id]}
-                      onClick={() => generateCv(form, { isRegenerate: true })}
-                      className="inline-flex cursor-pointer items-center justify-center gap-2 rounded-xl border border-amber-200 bg-gradient-to-b from-amber-50 to-white px-5 py-3 text-base font-semibold text-amber-950 shadow-sm transition hover:border-amber-300 disabled:cursor-not-allowed disabled:opacity-55 dark:border-amber-900/45 dark:from-amber-950/35 dark:to-slate-950 dark:text-amber-100"
-                    >
-                      <RefreshCw
-                        size={18}
-                        className={generatingIds[form.id] ? "animate-spin" : ""}
-                      />
-                      Regenerate
-                    </button>
-                  </>
-                ) : (
-                  <button
-                    type="button"
-                    disabled={!!generatingIds[form.id]}
-                    onClick={() => generateCv(form)}
-                    className="inline-flex cursor-pointer items-center justify-center gap-2 rounded-xl bg-primary px-5 py-3 text-base font-semibold text-primary-foreground shadow-sm transition hover:opacity-95 disabled:cursor-not-allowed disabled:opacity-55 dark:bg-primary"
-                  >
-                    <Wand2 size={18} />
-                    Generate CV
-                  </button>
-                )}
-                <button
-                  type="button"
-                  onClick={() => viewCv(form)}
-                  className="inline-flex cursor-pointer items-center justify-center gap-2 rounded-xl border border-sky-200 bg-sky-50 px-5 py-3 text-base font-semibold text-sky-900 transition-colors hover:bg-sky-100 dark:border-sky-900/40 dark:bg-sky-950/25 dark:text-sky-200 dark:hover:bg-sky-950/40"
-                >
-                  <FileText size={18} />
-                  View CV
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setEditMode((s) => !s)}
-                  className="inline-flex cursor-pointer items-center justify-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-5 py-3 text-base font-semibold text-amber-900 transition-colors hover:bg-amber-100 dark:border-amber-900/40 dark:bg-amber-950/25 dark:text-amber-200 dark:hover:bg-amber-950/40"
-                >
-                  <Pencil size={18} />
-                  {editMode ? "Cancel Edit" : "Edit"}
-                </button>
-                <button
-                  type="button"
-                  onClick={onDelete}
-                  className="inline-flex cursor-pointer items-center justify-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-5 py-3 text-base font-semibold text-rose-800 transition-colors hover:bg-rose-100 dark:border-rose-900/40 dark:bg-rose-950/25 dark:text-rose-200 dark:hover:bg-rose-950/40"
-                >
-                  <Trash2 size={18} />
-                  Delete
-                </button>
-                {editMode ? (
-                  <button
-                    type="button"
-                    onClick={onSave}
-                    className="inline-flex cursor-pointer items-center justify-center rounded-xl bg-emerald-600 px-6 py-3 text-base font-semibold text-white transition-colors hover:bg-emerald-700 dark:bg-emerald-600 dark:hover:bg-emerald-700"
-                  >
-                    Save changes
-                  </button>
-                ) : null}
-              </>
-            ) : null}
-            <button
-              type="button"
-              onClick={() => setProfileOpen(false)}
-              className="inline-flex cursor-pointer items-center justify-center rounded-xl border border-slate-200 bg-slate-50 px-6 py-3 text-base font-semibold text-slate-900 transition-colors hover:bg-slate-100 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800"
-            >
-              Close
-            </button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }
