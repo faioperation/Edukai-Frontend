@@ -560,14 +560,16 @@ export default function OrganizationsPage() {
             </span>
           </div>
 
-          <button
-            type="button"
-            onClick={openAdd}
-            className="inline-flex cursor-pointer items-center justify-center gap-2 rounded-xl bg-primary px-5 py-3 text-base font-semibold text-primary-foreground transition-transform hover:scale-[1.02] hover:opacity-95 dark:bg-primary"
-          >
-            <Plus size={18} />
-            Add Organizations
-          </button>
+          {false && (
+            <button
+              type="button"
+              onClick={openAdd}
+              className="hidden inline-flex cursor-pointer items-center justify-center gap-2 rounded-xl bg-primary px-5 py-3 text-base font-semibold text-primary-foreground transition-transform hover:scale-[1.02] hover:opacity-95 dark:bg-primary"
+            >
+              <Plus size={18} />
+              Add Organizations
+            </button>
+          )}
 
           <input
             ref={fileInputRef}
