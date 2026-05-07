@@ -33,9 +33,20 @@ function titleCaseFromEmailLocal(email) {
 function townRegionLine(od) {
   if (!od || typeof od !== "object") return "";
   const town = String(od.Town ?? od.town ?? "").trim();
+  const district = String(od.District ?? od.district ?? "").trim();
   const reg = String(od.region ?? od.Region ?? "").trim();
-  if (town && reg && town.toLowerCase() !== reg.toLowerCase()) return `${town}, ${reg}`;
-  return town || reg || "";
+
+  const parts = [town, district, reg].filter(Boolean);
+  const uniqueParts = [];
+  const seen = new Set();
+  for (const p of parts) {
+    const low = p.toLowerCase();
+    if (!seen.has(low)) {
+      uniqueParts.push(p);
+      seen.add(low);
+    }
+  }
+  return uniqueParts.join(", ");
 }
 
 /** Map `/import-contact/all` rows to queue table columns. */
@@ -85,21 +96,40 @@ function mapMailQueueContactRow(item) {
   const organization = pickScalar(
     d.OrganizationName,
     d.organizationName,
+    d.OrganisationName,
+    d.organisationName,
     d.organization_name,
+    d.organisation_name,
     d.organization,
+    d.organisation,
     od?.OrganizationName,
     od?.organizationName,
+    od?.OrganisationName,
+    od?.organisationName,
     payload?.OrganizationName,
     payload?.organizationName,
+    payload?.OrganisationName,
+    payload?.organisationName,
     payload?.organization,
+    payload?.organisation,
     nested?.OrganizationName,
-    nested?.organizationName
+    nested?.organizationName,
+    nested?.OrganisationName,
+    nested?.organisationName,
+    orgObj?.OrganizationName,
+    orgObj?.organizationName,
+    orgObj?.OrganisationName,
+    orgObj?.organisationName,
+    orgObj?.name,
+    orgObj?.Name
   );
 
   const jobTitle = pickScalar(
     d.JobTitle,
     d.jobTitle,
     d.job_title,
+    od?.JobTitle,
+    od?.jobTitle,
     payload?.JobTitle,
     payload?.jobTitle,
     nested?.JobTitle,
@@ -135,8 +165,12 @@ function mapMailQueueContactRow(item) {
     od?.town,
     od?.LocalAuthority,
     od?.localAuthority,
+    od?.District,
+    od?.district,
     od?.Postcode,
     od?.postcode,
+    d.District,
+    d.district,
     d.region,
     d.Region,
     d.Town,
@@ -152,13 +186,19 @@ function mapMailQueueContactRow(item) {
     payload?.Location,
     payload?.location,
     payload?.LocalAuthority,
+    payload?.District,
+    payload?.district,
     nested?.Town,
     nested?.region,
     nested?.town,
+    nested?.district,
+    nested?.District,
     orgObj?.Town,
     orgObj?.town,
     orgObj?.Region,
     orgObj?.region,
+    orgObj?.District,
+    orgObj?.district,
     orgObj?.County,
     orgObj?.county,
     payload?.County,
@@ -209,6 +249,17 @@ function mapMailQueueContactRow(item) {
     orgObj?.establishmentPhase
   );
 
+  const genderRaw = pickScalar(
+    d.Gender,
+    d.gender,
+    od?.Gender,
+    od?.gender,
+    payload?.Gender,
+    payload?.gender,
+    nested?.Gender,
+    nested?.gender
+  );
+
   const emailStr = typeof email === "string" ? email : email !== "" ? String(email) : "";
   let contactPersonStr =
     typeof contactPerson === "string" ? contactPerson : contactPerson !== "" ? String(contactPerson) : "";
@@ -229,25 +280,28 @@ function mapMailQueueContactRow(item) {
       radiusKm === "" || radiusKm == null
         ? "N/A"
         : !isNaN(Number(radiusKm))
-          ? (Number(radiusKm) / 1000).toFixed(2) + " KM"
+          ? Math.floor(Number(radiusKm)) + " KM"
           : String(radiusKm),
     phase: phaseRaw !== "" ? String(phaseRaw).trim() || "—" : "—",
+    gender: genderRaw !== "" ? String(genderRaw).trim() || "—" : "—",
   };
 }
 
 const MAIL_RADIUS_KM_MAX = 1000;
 
 /** 3, 5, 7, … odd steps up to max; if max is even (e.g. 1000), append it once. */
-function buildMailRadiusKmOptions(maxKm = MAIL_RADIUS_KM_MAX) {
-  const cap = Math.max(3, Math.floor(Number(maxKm) || 0));
+function buildMailRadiusKmOptions() {
   const out = [];
-  for (let n = 3; n <= cap; n += 2) {
-    out.push(n);
-  }
-  if (cap >= 4 && cap % 2 === 0 && out[out.length - 1] !== cap) {
-    out.push(cap);
-  }
-  return out;
+  // Small increments up to 20
+  for (let n = 3; n <= 21; n += 2) out.push(n);
+  // Middle increments
+  for (let n = 25; n <= 100; n += 25) out.push(n);
+  // Large increments up to 1000
+  for (let n = 200; n <= 1000; n += 200) out.push(n);
+  // Requested specific high values
+  out.push(2000, 3000, 5000, 7000, 10000);
+
+  return [...new Set(out)].sort((a, b) => a - b);
 }
 
 /** Radius filter values for the queue dropdown (not from API). */
@@ -333,12 +387,7 @@ export default function MailSubmissionClient() {
     return ["All Authorities", ...list.map(String)];
   }, [importContactFiltersQuery.data]);
 
-  const genders = useMemo(() => {
-    const list = Array.isArray(importContactFiltersQuery.data?.genders)
-      ? importContactFiltersQuery.data.genders.filter(Boolean)
-      : [];
-    return ["All Genders", ...list.map(String)];
-  }, [importContactFiltersQuery.data]);
+  const genders = useMemo(() => ["All Genders", "Boys", "Girls", "Mixed"], []);
 
   const townsList = useMemo(() => {
     const list = Array.isArray(importContactFiltersQuery.data?.towns)
@@ -449,23 +498,7 @@ export default function MailSubmissionClient() {
     totalPage: 1,
   };
 
-  useEffect(() => {
-    const idSet = new Set(rows.map((r) => String(r.id ?? "")));
-    setSelected((prev) => {
-      const next = new Set();
-      for (const id of prev) {
-        const sid = String(id);
-        if (idSet.has(sid)) next.add(sid);
-      }
-      if (next.size === prev.size) {
-        for (const x of prev) {
-          if (!next.has(String(x))) return next;
-        }
-        return prev;
-      }
-      return next;
-    });
-  }, [rows]);
+
 
   const selectedCount = selected.size;
   const allFilteredSelected =
@@ -745,8 +778,9 @@ export default function MailSubmissionClient() {
                 <th className="px-5 py-4 font-semibold">Email</th>
                 <th className="px-5 py-4 font-semibold">Organization Name</th>
                 <th className="px-5 py-4 font-semibold">Job Title</th>
+                <th className="px-5 py-4 font-semibold">Gender</th>
                 <th className="px-5 py-4 font-semibold">Town</th>
-                <th className="px-5 py-4 font-semibold">Radius (KM)</th>
+                <th className="px-5 py-4 font-semibold">Radius</th>
                 <th className="px-5 py-4 font-semibold">Phase</th>
               </tr>
             </thead>
@@ -754,7 +788,7 @@ export default function MailSubmissionClient() {
               {importContactsQuery.isPending && rows.length === 0 ? (
                 <tr>
                   <td
-                    colSpan={8}
+                    colSpan={9}
                     className="px-5 py-12 text-center text-base text-black/60 dark:text-slate-400"
                   >
                     Loading contacts…
@@ -763,7 +797,7 @@ export default function MailSubmissionClient() {
               ) : importContactsQuery.isError && rows.length === 0 ? (
                 <tr>
                   <td
-                    colSpan={8}
+                    colSpan={9}
                     className="px-5 py-10 text-center text-base text-red-600 dark:text-red-400"
                   >
                     {importContactsQuery.error?.message || "Failed to load contacts"}
@@ -772,7 +806,7 @@ export default function MailSubmissionClient() {
               ) : rows.length === 0 ? (
                 <tr>
                   <td
-                    colSpan={8}
+                    colSpan={9}
                     className="px-5 py-10 text-center text-base text-black/60 dark:text-slate-400"
                   >
                     No contacts found. Adjust filters and try again.
@@ -807,6 +841,9 @@ export default function MailSubmissionClient() {
                     </td>
                     <td className="px-5 py-4 text-base text-slate-700 dark:text-slate-200">
                       {r.jobTitle}
+                    </td>
+                    <td className="px-5 py-4 text-base text-slate-700 dark:text-slate-200">
+                      {r.gender}
                     </td>
                     <td className="px-5 py-4 text-base text-slate-700 dark:text-slate-200">
                       {r.location}
@@ -896,7 +933,7 @@ export default function MailSubmissionClient() {
                   </div>
                   <div className="rounded-xl bg-slate-50 p-3 dark:bg-slate-900">
                     <div className="text-xs text-black/60 dark:text-slate-400">
-                      Radius (KM)
+                      Radius
                     </div>
                     <div className="mt-1 text-sm font-medium text-black dark:text-slate-100">
                       {r.radiusKm}
@@ -904,7 +941,7 @@ export default function MailSubmissionClient() {
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 gap-3">
+                <div className="grid grid-cols-2 gap-3">
                   <div className="rounded-xl bg-slate-50 p-3 dark:bg-slate-900">
                     <div className="text-xs text-black/60 dark:text-slate-400">
                       Phase
@@ -913,6 +950,14 @@ export default function MailSubmissionClient() {
                       <span className="inline-flex items-center rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-800 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100">
                         {r.phase}
                       </span>
+                    </div>
+                  </div>
+                  <div className="rounded-xl bg-slate-50 p-3 dark:bg-slate-900">
+                    <div className="text-xs text-black/60 dark:text-slate-400">
+                      Gender
+                    </div>
+                    <div className="mt-1 text-sm font-medium text-black dark:text-slate-100">
+                      {r.gender}
                     </div>
                   </div>
                 </div>

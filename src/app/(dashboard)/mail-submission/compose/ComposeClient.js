@@ -693,7 +693,7 @@ export default function ComposeClient() {
               {!payload ? (
                 "Generate an email from the mail queue to attach the CV PDF."
               ) : generatedCvRowId ? (
-                "No PDF URL or path found for this generated CV."
+                `${na(effectiveCvForPreview?.firstName || "Candidate")}.pdf`
               ) : (
                 "This email record did not include a generated CV reference."
               )}
